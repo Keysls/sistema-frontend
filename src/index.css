@@ -1,0 +1,72 @@
+/* ── Design tokens ─────────────────────────────────────────── */
+:root {
+  --bg:          #F0F4F8;
+  --bg-2:        #E4ECF4;
+  --bg-3:        #D6E4F0;
+  --bg-card:     #FFFFFF;
+
+  --txt:         #0D1B2A;
+  --txt-2:       #2C4A6E;
+  --txt-3:       #5A7A9A;
+  --txt-hint:    #8AAABB;
+
+  --border:      #C5D8EA;
+  --border-2:    #A8C4DC;
+
+  --accent:      #1E3A8A;
+  --accent-glow: rgba(30,58,138,0.1);
+
+  --green:       #16A34A;
+  --green-bg:    rgba(22,163,74,0.08);
+
+  --red:         #DC2626;
+  --red-bg:      rgba(220,38,38,0.08);
+
+  --yellow:      #D97706;
+  --yellow-bg:   rgba(217,119,6,0.08);
+
+  --blue:        #3B9FD4;
+  --blue-bg:     rgba(59,159,212,0.1);
+
+  --font-display: 'Inter', sans-serif;
+  --font-body:    'Inter', sans-serif;
+
+  --radius:      8px;
+  --radius-lg:   12px;
+  --sidebar-w:   224px;
+  --sidebar-w-colapsado: 64px;
+
+  --font-mono:    'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 14px; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--txt);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+button { cursor: pointer; border: none; background: none; font-family: inherit; }
+input, select, textarea { font-family: inherit; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-2); }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-fade { animation: fadeIn .25s ease both; }
+.spin { animation: spin 1s linear infinite; }
