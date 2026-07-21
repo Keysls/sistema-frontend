@@ -203,6 +203,7 @@ export default function AlmacenCatalogo() {
         es_medible:        modalProducto.categoria === 'Rollo',
         metros_por_unidad: modalProducto.metros_por_unidad || null,
         tiene_variantes:   modalProducto.categoria === 'EPP',
+        stock_minimo:      modalProducto.stock_minimo || 0,
       };
       return modalProducto.id
         ? productosApi.actualizar(modalProducto.id, payload)
@@ -246,6 +247,7 @@ export default function AlmacenCatalogo() {
     id: p.id, nombre: p.nombre || '', codigo: p.codigo || '',
     categoria: p.categoria || '', unidad: p.unidad || '',
     descripcion: p.descripcion || '', metros_por_unidad: p.metrosPorUnidad || '',
+    stock_minimo: p.stockMinimo || '',
   });
 
   const toggleVariantes = async (producto) => {
@@ -360,6 +362,7 @@ export default function AlmacenCatalogo() {
       <Input required label="Nombre" placeholder="ej: Pastillas de freno delanteras" value={modalProducto.nombre} onChange={e => setModalProducto({ ...modalProducto, nombre: e.target.value })} />
       <Input label="Descripción" value={modalProducto.descripcion} onChange={e => setModalProducto({ ...modalProducto, descripcion: e.target.value })} />
       <Input label="Unidad" value={modalProducto.unidad} onChange={e => setModalProducto({ ...modalProducto, unidad: e.target.value })} />
+      <Input label="Stock mínimo" type="number" min="0" placeholder="0" value={modalProducto.stock_minimo ?? ''} onChange={e => setModalProducto({ ...modalProducto, stock_minimo: e.target.value })} />
       {modalProducto.categoria === 'Rollo' && (
         <Input label="Metros por unidad / rollo" type="number" value={modalProducto.metros_por_unidad || ''} onChange={e => setModalProducto({ ...modalProducto, metros_por_unidad: e.target.value })} />
       )}

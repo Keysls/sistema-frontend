@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, Contact, Users, BarChart2,
-  Map, Package, UserCog, Wifi, ArrowDownToLine, HardHat, Tags,
+  Map, Package, UserCog, Wifi, Tags, FileText, DollarSign, Building2,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth.store';
 import { useState, useEffect } from 'react';
@@ -74,18 +74,28 @@ const S = {
 };
 
 const NAV_PRINCIPAL = [
-  { to: '/',         label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { to: '/ordenes',  label: 'Órdenes',   icon: ClipboardList   },
-  { to: '/clientes', label: 'Clientes',  icon: Contact         },
-  { to: '/mapa',     label: 'Mapa',      icon: Map             },
-  { to: '/reportes', label: 'Reportes',  icon: BarChart2       },
-  { to: '/planes',   label: 'Planes',    icon: Wifi            },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+];
+
+const NAV_OPERACIONES = [
+  { to: '/ordenes', label: 'Órdenes', icon: ClipboardList },
+  { to: '/mapa',    label: 'Mapa',    icon: Map           },
+];
+
+const NAV_COMERCIAL = [
+  { to: '/contratos', label: 'Contratos', icon: FileText   },
+  { to: '/clientes',  label: 'Clientes',  icon: Contact    },
+  { to: '/planes',    label: 'Planes',    icon: Wifi       },
+  { to: '/pagos',     label: 'Pagos',     icon: DollarSign },
+];
+
+const NAV_ANALISIS = [
+  { to: '/reportes', label: 'Reportes', icon: BarChart2 },
 ];
 
 const NAV_ALMACEN = [
   { to: '/almacen',              label: 'Dashboard',    icon: LayoutDashboard, exact: true },
   { to: '/almacen/inventario',   label: 'Inventario',   icon: Package         },
-  { to: '/almacen/devoluciones', label: 'Devoluciones', icon: ArrowDownToLine },
   { to: '/almacen/catalogo',     label: 'Catálogo',     icon: Tags            },
   { to: '/almacen/reportes',     label: 'Reportes',     icon: BarChart2       },
 ];
@@ -95,9 +105,10 @@ const NAV_PERSONAL = [
   { to: '/secretarios', label: 'Secretario(a)', icon: UserCog },
 ];
 
-const NAV_OPERACIONES = [
-  { to: '/planta-externa', label: 'Planta Externa', icon: HardHat },
+const NAV_CONFIGURACION = [
+  { to: '/empresa', label: 'Mi Empresa', icon: Building2 },
 ];
+
 
 function NavItem({ to, label, Icon, exact, colapsado, esMovil, onCerrar }) {
   return (
@@ -186,10 +197,13 @@ export default function Sidebar({ colapsado, esMovil, abierto, onCerrar }) {
             ])
           ) : (
             <>
-              {section('Principal',   NAV_PRINCIPAL)}
-              {section('Almacén',     NAV_ALMACEN)}
-              {section('Personal',    NAV_PERSONAL)}
-              {section('Operaciones', NAV_OPERACIONES)}
+              {section('Principal',    NAV_PRINCIPAL)}
+              {section('Operaciones',  NAV_OPERACIONES)}
+              {section('Comercial',    NAV_COMERCIAL)}
+              {section('Análisis',     NAV_ANALISIS)}
+              {section('Almacén',      NAV_ALMACEN)}
+              {section('Personal',     NAV_PERSONAL)}
+              {section('Configuración', NAV_CONFIGURACION)}
             </>
           )}
         </nav>

@@ -32,6 +32,11 @@ export const useAuthStore = create((set) => ({
     }
   },
 
+  setUsuario: (usuario) => {
+    localStorage.setItem('usuario', JSON.stringify(usuario));
+    set({ usuario });
+  },
+
   logout: async () => {
     try { await authApi.logout(); } catch {}
     localStorage.removeItem('token');

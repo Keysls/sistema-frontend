@@ -43,11 +43,16 @@
 
 html { font-size: 14px; }
 
+html, body {
+  overscroll-behavior-y: none;
+}
+
 body {
   font-family: var(--font-body);
   background: var(--bg);
   color: var(--txt);
   min-height: 100vh;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,3 +75,41 @@ input, select, textarea { font-family: inherit; }
 }
 .animate-fade { animation: fadeIn .25s ease both; }
 .spin { animation: spin 1s linear infinite; }
+
+/* ── Utilidades responsivas ──────────────────────────────────── */
+/* Grillas de 2/3/4 columnas usadas en KPIs y formularios: se
+   colapsan progresivamente en pantallas chicas. Usar junto al
+   style inline existente (gridTemplateColumns); estas reglas
+   ganan por especificidad de media query + !important. */
+@media (max-width: 900px) {
+  .resp-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+  .resp-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+  .resp-grid-2col-charts { grid-template-columns: 1fr !important; }
+}
+@media (max-width: 640px) {
+  .resp-grid-4 { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  .resp-grid-3 { grid-template-columns: 1fr !important; }
+  .resp-grid-2 { grid-template-columns: 1fr !important; }
+  .resp-page-padding { padding: 14px !important; }
+  .resp-toolbar { flex-direction: column !important; align-items: stretch !important; }
+  .resp-toolbar > * { width: 100% !important; min-width: 0 !important; }
+  .resp-hide-mobile { display: none !important; }
+}
+@media (max-width: 420px) {
+  .resp-grid-4 { grid-template-columns: 1fr 1fr !important; }
+}
+
+/* Tabla -> tarjetas apiladas en móvil (mismo patrón que Almacén/Inventario) */
+.resp-table { display: block; }
+.resp-cards { display: none; }
+@media (max-width: 900px) {
+  .resp-table { display: none !important; }
+  .resp-cards { display: flex !important; flex-direction: column; gap: 10px; padding: 10px; }
+}
+.resp-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
+}
+.resp-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.resp-card-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--txt-3); }
+.resp-card-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

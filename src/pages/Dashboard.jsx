@@ -6,6 +6,20 @@ import {
   Tooltip, ResponsiveContainer,
 } from 'recharts';
 import api from '../services/api.js';
+import { tipoLabel } from '../utils/tiposOrden';
+
+const ESTADOS_ORDEN = {
+  PENDIENTE:  { label: 'Pendiente',  bg: '#FEF3C7', color: '#92400E' },
+  ASIGNADA:   { label: 'Asignada',   bg: '#DBEAFE', color: '#1D4ED8' },
+  EN_PROCESO: { label: 'En proceso', bg: '#DBEAFE', color: '#1D4ED8' },
+  COMPLETADA: { label: 'Completada', bg: '#DCFCE7', color: '#15803D' },
+  CANCELADA:  { label: 'Cancelada',  bg: '#FEE2E2', color: '#B91C1C' },
+};
+
+function fmtFechaCorta(f) {
+  if (!f) return '—';
+  return new Date(f).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 // ─── API ──────────────────────────────────────────────────────────
 const dashApi = {
@@ -144,10 +158,10 @@ export default function Dashboard() {
 
       {/* ── KPI Cards ── */}
       <div className="dash-grid-kpis">
-        <KPIDestacada label="Clientes por cobrar"     value={fmt(kpis?.ventasHoy)}       diff={1} icon={PiggyBank} masked />
-        <KPICard      label="Ingresos Semanales" value={fmt(kpis?.ventasSemana)}    diff={1} diffLabel="últ. 7 días"   icon={PiggyBank} masked />
-        <KPICard      label="Ingreso Total"      value={fmt(kpis?.ventasMes)}       diff={1} diffLabel="histórico"     icon={PiggyBank} masked />
-        <KPICard      label="Contratos activos"       value={kpis?.ordenesAbiertas ?? 0} diff={1} diffLabel="activos"    icon={PiggyBank} />
+        <KPIDestacada label="Clientes con deuda"  value={kpis?.clientesConDeuda ?? 0} diff={1} icon={PiggyBank} />
+        <KPICard      label="Deuda total"         value={fmt(kpis?.deudaTotal)}       diff={-1} diffLabel="pendiente"   icon={PiggyBank} />
+        <KPICard      label="Recaudado del mes"   value={fmt(kpis?.recaudadoMes)}     diff={1}  diffLabel="este mes"     icon={PiggyBank} />
+        <KPICard      label="Contratos activos"   value={kpis?.contratosActivos ?? 0} diff={1}  diffLabel="activos"      icon={PiggyBank} />
       </div>
 
       {/* ── Gráfico analítica ── */}
@@ -183,7 +197,7 @@ export default function Dashboard() {
               interval="preserveStartEnd"
             />
             <YAxis
-              tickFormatter={v => `S/${(v/1000).toFixed(0)}k`}
+              tickFormatter={v => v >= 1000 ? `S/${(v / 1000).toFixed(1)}k` : `S/${v}`}
               tick={{ fontSize: 10, fill: '#94A3B8' }}
               axisLine={false} tickLine={false}
               width={48}
@@ -211,37 +225,38 @@ export default function Dashboard() {
             <thead>
               <tr style={{ background: '#F8FAFC' }}>
                 <th style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Nº Orden</th>
-                <th style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Placa</th>
                 <th style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Cliente</th>
+                <th className="dash-col-desc" style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Servicio</th>
                 <th style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Técnico</th>
-                <th className="dash-col-desc" style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Descripción</th>
-                <th className="dash-col-hora" style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Fecha</th>
-                <th style={{ padding: '9px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Monto</th>
+                <th style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Estado</th>
+                <th className="dash-col-hora" style={{ padding: '9px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #F1F5F9' }}>Fecha</th>
               </tr>
             </thead>
             <tbody>
-              {(historial || []).map((h, i) => (
-                <tr key={i}
-                  onMouseEnter={e => e.currentTarget.style.background = '#FAFBFF'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  style={{ borderBottom: '1px solid #F8FAFC' }}>
-                  <td style={{ padding: '10px 14px' }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 7px', borderRadius: 6 }}>{h.numeroOrden}</span>
-                  </td>
-                  <td style={{ padding: '10px 14px' }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, background: '#F1F5F9', color: '#334155', padding: '2px 7px', borderRadius: 6 }}>{h.placa || '—'}</span>
-                  </td>
-                  <td style={{ padding: '10px 14px', fontSize: 13, color: '#0D1B2A', whiteSpace: 'nowrap' }}>{h.cliente}</td>
-                  <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>{h.tecnico}</td>
-                  <td className="dash-col-desc" style={{ padding: '10px 14px', fontSize: 12, color: '#64748B', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.descripcion}</td>
-                  <td className="dash-col-hora" style={{ padding: '10px 14px', fontSize: 11, color: '#94A3B8', whiteSpace: 'nowrap' }}>{h.fecha} {h.hora}</td>
-                  <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: '#0D1B2A', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(h.monto)}</td>
-                </tr>
-              ))}
+              {(historial || []).map((h, i) => {
+                const estado = ESTADOS_ORDEN[h.estado] || { label: h.estado, bg: '#F1F5F9', color: '#334155' };
+                return (
+                  <tr key={i}
+                    onMouseEnter={e => e.currentTarget.style.background = '#FAFBFF'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    style={{ borderBottom: '1px solid #F8FAFC' }}>
+                    <td style={{ padding: '10px 14px' }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 7px', borderRadius: 6 }}>{h.numeroOrden}</span>
+                    </td>
+                    <td style={{ padding: '10px 14px', fontSize: 13, color: '#0D1B2A', whiteSpace: 'nowrap' }}>{h.cliente}</td>
+                    <td className="dash-col-desc" style={{ padding: '10px 14px', fontSize: 12, color: '#64748B', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tipoLabel(h.tipoOrden)}</td>
+                    <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>{h.tecnico}</td>
+                    <td style={{ padding: '10px 14px' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, background: estado.bg, color: estado.color, padding: '2px 8px', borderRadius: 20 }}>{estado.label}</span>
+                    </td>
+                    <td className="dash-col-hora" style={{ padding: '10px 14px', fontSize: 11, color: '#94A3B8', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmtFechaCorta(h.fecha)}</td>
+                  </tr>
+                );
+              })}
               {!historial?.length && (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: 36, color: '#94A3B8', fontSize: 13 }}>
-                    No hay órdenes terminadas aún
+                  <td colSpan={6} style={{ textAlign: 'center', padding: 36, color: '#94A3B8', fontSize: 13 }}>
+                    No hay órdenes registradas aún
                   </td>
                 </tr>
               )}

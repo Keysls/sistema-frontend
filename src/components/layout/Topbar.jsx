@@ -10,6 +10,7 @@ const TITULOS = {
   '/mapa':                 'Mapa de Red',
   '/reportes':             'Reportes',
   '/planes':               'Planes',
+  '/perfil':               'Mi Perfil',
   '/tecnicos':             'Técnicos',
   '/secretarios':          'Secretario(a)',
   '/almacen':              'Almacén · Dashboard',

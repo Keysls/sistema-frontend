@@ -31,6 +31,13 @@ export function Btn({ variant = 'primary', size = 'md', icon, loading, disabled,
   );
 }
 
+// ─── Spinner ────────────────────────────────────────────────────
+export function Spinner({ size = 20, color = 'var(--accent)' }) {
+  return (
+    <Loader2 size={size} color={color} className="spin" />
+  );
+}
+
 // ─── Badge ──────────────────────────────────────────────────────
 const BADGE_COLORS = {
   blue:   { bg: 'var(--blue-bg)',   fg: 'var(--blue)'   },
