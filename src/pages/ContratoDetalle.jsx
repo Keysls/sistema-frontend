@@ -58,13 +58,17 @@ function linkWhatsapp(telefono, mensaje) {
   return `https://wa.me/${conCodigo}?text=${encodeURIComponent(mensaje)}`;
 }
 
+function saldoCargo(cg) {
+  return Number(cg.monto) - (cg.pagos || []).reduce((s, p) => s + Number(p.monto), 0);
+}
+
 function mensajeRecordatorio(c, metodosPago) {
-  const pendientes = (c.cargos || []).filter(cg => cg.estado === 'PENDIENTE');
+  const pendientes = (c.cargos || []).filter(cg => cg.estado === 'PENDIENTE' || cg.estado === 'PARCIAL');
   const nombre = c.cliente?.nombres || 'cliente';
   if (pendientes.length === 0) {
     return `Hola ${nombre}, te saludamos de Prointelco. Tu contrato ${c.numero} está al día. ¡Gracias por tu preferencia!`;
   }
-  const total = pendientes.reduce((s, cg) => s + Number(cg.monto), 0);
+  const total = pendientes.reduce((s, cg) => s + saldoCargo(cg), 0);
   const meses = pendientes.map(cg => fmtPeriodo(cg.periodo)).join(', ');
   const diaCorte = c.diaCorte || 1;
   return `Hola ${nombre}, te saludamos de Prointelco. Tu contrato ${c.numero} tiene una deuda pendiente de S/ ${total.toFixed(2)} correspondiente a: ${meses}. Tu fecha de corte es el día ${diaCorte} de cada mes. Por favor regulariza tu pago para evitar el corte del servicio.${formatMetodosPagoTexto(metodosPago)}\n\n¡Gracias!`;
@@ -247,7 +251,9 @@ export default function ContratoDetalle() {
           <div style={{ padding: '4px 16px 8px' }}>
             {c.cargos.map((cg, i) => {
               const pagado = cg.estado === 'PAGADO';
-              const pagoInfo = cg.pagos?.[0]?.pago;
+              const parcial = cg.estado === 'PARCIAL';
+              const pagoInfo = cg.pagos?.[cg.pagos.length - 1]?.pago;
+              const saldo = saldoCargo(cg);
               const ultima = i === c.cargos.length - 1;
               return (
                 <div key={cg.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', borderBottom: ultima ? 'none' : '1px solid var(--border)' }}>
@@ -258,9 +264,14 @@ export default function ContratoDetalle() {
                         Pagado el {fmtFecha(pagoInfo.fecha)} · {pagoInfo.usuario?.nombre} {pagoInfo.usuario?.apellido}
                       </div>
                     )}
+                    {parcial && (
+                      <div style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                        Abonado S/ {(Number(cg.monto) - saldo).toFixed(2)} · falta S/ {saldo.toFixed(2)}
+                      </div>
+                    )}
                   </div>
                   <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, color: 'var(--txt)' }}>S/ {Number(cg.monto).toFixed(2)}</span>
-                  <Badge color={pagado ? 'green' : 'yellow'}>{pagado ? 'Pagado' : 'Pendiente'}</Badge>
+                  <Badge color={pagado ? 'green' : parcial ? 'yellow' : 'red'}>{pagado ? 'Pagado' : parcial ? 'Parcial' : 'Pendiente'}</Badge>
                 </div>
               );
             })}

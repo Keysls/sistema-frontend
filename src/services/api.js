@@ -97,6 +97,7 @@ export const contratosApi = {
   obtener:    (id) => api.get(`/contratos/${id}`),
   crear:      (payload) => api.post('/contratos', payload),
   actualizar: (id, payload) => api.put(`/contratos/${id}`, payload),
+  importar:   (filas) => api.post('/contratos/importar', { filas }),
 };
 
 export const ordenesApi = {
@@ -110,7 +111,9 @@ export const ordenesApi = {
 
 export const cargosApi = {
   porContrato: (contratoId) => api.get(`/cargos/contrato/${contratoId}`),
-  generar:     () => api.post('/cargos/generar'),
+  preview:     () => api.get('/cargos/preview'),
+  generar:     (payload) => api.post('/cargos/generar', payload),
+  crearManual: (payload) => api.post('/cargos', payload),
 };
 
 export const pagosApi = {

@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { DollarSign, Search, X, RefreshCw, CheckCircle2, MessageCircle, Download, AlertTriangle, FileSpreadsheet, TrendingDown, Plus, Wallet } from 'lucide-react';
+import {
+  DollarSign, Search, X, RefreshCw, CheckCircle2, MessageCircle, Download, AlertTriangle,
+  FileSpreadsheet, TrendingDown, Plus, Wallet, Users, ClipboardList, PlusCircle,
+} from 'lucide-react';
 import { contratosApi, cargosApi, pagosApi, empresaApi, egresosApi } from '../services/api';
-import { Btn, Badge, Table, Tr, Td } from '../components/ui';
+import { Btn, Badge, Table, Tr, Td, Modal } from '../components/ui';
 import { formatMetodosPagoTexto } from '../utils/metodosPago';
 
 const METODOS = {
@@ -12,6 +15,10 @@ const METODOS = {
   PLIN: 'Plin',
   TRANSFERENCIA: 'Transferencia',
   TARJETA: 'Tarjeta',
+};
+
+const METODO_COLOR = {
+  EFECTIVO: '#16A34A', YAPE: '#7C3AED', PLIN: '#2563EB', TRANSFERENCIA: '#0891B2', TARJETA: '#D97706',
 };
 
 const campoInputStyle = {
@@ -24,6 +31,21 @@ function Campo({ label, required, children }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <label style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{label}{required && <span> *</span>}</label>
+      {children}
+    </div>
+  );
+}
+
+function SeccionCard({ titulo, icono: Icono, colorIcono, accion, children }) {
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingBottom: 8, borderBottom: '1px solid #E2ECF4', marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icono size={14} color={colorIcono || '#2563EB'} />
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: colorIcono || '#2563EB', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{titulo}</span>
+        </div>
+        {accion}
+      </div>
       {children}
     </div>
   );
@@ -118,13 +140,90 @@ async function descargarComprobante(pagoId, pagosApi) {
   }
 }
 
-const METODO_COLOR = {
-  EFECTIVO: '#16A34A', YAPE: '#7C3AED', PLIN: '#2563EB', TRANSFERENCIA: '#0891B2', TARJETA: '#D97706',
-};
-
 const emptyEgreso = { concepto: '', categoria: '', monto: '', fecha: new Date().toISOString().slice(0, 10), observacion: '' };
 
+// ─────────────────────────────────────────────────────────────────
+// Reporte de caja — siempre visible arriba de todo
+// ─────────────────────────────────────────────────────────────────
 function ReporteCaja() {
+  const hoy = new Date();
+  const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10);
+  const [fechaDesde, setFechaDesde] = useState(primerDiaMes);
+  const [fechaHasta, setFechaHasta] = useState(hoy.toISOString().slice(0, 10));
+
+  const params = { fechaDesde: fechaDesde || undefined, fechaHasta: fechaHasta || undefined };
+
+  const reporteQ = useQuery({
+    queryKey: ['pagos-reporte', fechaDesde, fechaHasta],
+    queryFn: () => pagosApi.reporte(params).then(r => r.data),
+  });
+
+  const egresosQ = useQuery({
+    queryKey: ['egresos', fechaDesde, fechaHasta],
+    queryFn: () => egresosApi.listar(params).then(r => r.data),
+  });
+
+  const egresos = egresosQ.data || [];
+  const reporte = reporteQ.data;
+
+  const exportarReporteExcel = () => {
+    const filas = [
+      ...Object.entries(METODOS).map(([k, v]) => ({ Concepto: `Ingresos - ${v}`, Monto: Number(reporte?.porMetodo?.[k] || 0) })),
+      { Concepto: 'Total Ingresos', Monto: Number(reporte?.totalIngresos || 0) },
+      ...egresos.map(e => ({ Concepto: `Egreso: ${e.concepto}`, Monto: -Number(e.monto) })),
+      { Concepto: 'Total Egresos', Monto: -Number(reporte?.totalEgresos || 0) },
+      { Concepto: 'Saldo Neto', Monto: Number(reporte?.saldoNeto || 0) },
+    ];
+    exportarExcel(filas, [28, 14], `reporte_caja_${fechaDesde}_a_${fechaHasta}.xlsx`);
+  };
+
+  return (
+    <SeccionCard titulo="Reporte de caja" icono={Wallet}
+      accion={<Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} onClick={exportarReporteExcel}>Exportar Excel</Btn>}>
+
+      <div className="resp-toolbar" style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: '#64748B' }}>Del</span>
+        <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} max={fechaHasta || undefined}
+          style={{ height: 34, padding: '0 10px', background: '#E1EBF5', border: '1px solid #C9DAEA', borderRadius: 6, fontSize: 13 }} />
+        <span style={{ fontSize: 12, color: '#64748B' }}>al</span>
+        <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} min={fechaDesde || undefined}
+          style={{ height: 34, padding: '0 10px', background: '#E1EBF5', border: '1px solid #C9DAEA', borderRadius: 6, fontSize: 13 }} />
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#1E3A5F', marginBottom: 8 }}>Ingresos por método de pago</div>
+      <div className="resp-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 16 }}>
+        {Object.entries(METODOS).map(([k, v]) => (
+          <div key={k} style={{ padding: '10px 12px', borderRadius: 8, background: '#F8FAFC', border: `1px solid ${METODO_COLOR[k]}33` }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: METODO_COLOR[k], textTransform: 'uppercase' }}>{v}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1E3A5F', fontFamily: 'monospace' }}>
+              S/ {Number(reporte?.porMetodo?.[k] || 0).toFixed(2)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#15803D' }}>TOTAL INGRESOS</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#15803D', fontFamily: 'monospace' }}>S/ {Number(reporte?.totalIngresos || 0).toFixed(2)}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#DC2626' }}>TOTAL EGRESOS</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#DC2626', fontFamily: 'monospace' }}>S/ {Number(reporte?.totalEgresos || 0).toFixed(2)}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#1E3A8A' }}>SALDO NETO</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#1E3A8A', fontFamily: 'monospace' }}>S/ {Number(reporte?.saldoNeto || 0).toFixed(2)}</div>
+        </div>
+      </div>
+    </SeccionCard>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Pestaña: Registrar egresos
+// ─────────────────────────────────────────────────────────────────
+function TabEgresos() {
   const qc = useQueryClient();
   const hoy = new Date();
   const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10);
@@ -133,11 +232,6 @@ function ReporteCaja() {
   const [nuevoEgreso, setNuevoEgreso] = useState(null);
 
   const params = { fechaDesde: fechaDesde || undefined, fechaHasta: fechaHasta || undefined };
-
-  const reporteQ = useQuery({
-    queryKey: ['pagos-reporte', fechaDesde, fechaHasta],
-    queryFn: () => pagosApi.reporte(params).then(r => r.data),
-  });
 
   const egresosQ = useQuery({
     queryKey: ['egresos', fechaDesde, fechaHasta],
@@ -166,34 +260,13 @@ function ReporteCaja() {
   });
 
   const egresos = egresosQ.data || [];
-  const reporte = reporteQ.data;
-
   const egresoValido = nuevoEgreso && nuevoEgreso.concepto.trim() && nuevoEgreso.fecha && Number(nuevoEgreso.monto) > 0;
 
-  const exportarReporteExcel = () => {
-    const filas = [
-      ...Object.entries(METODOS).map(([k, v]) => ({ Concepto: `Ingresos - ${v}`, Monto: Number(reporte?.porMetodo?.[k] || 0) })),
-      { Concepto: 'Total Ingresos', Monto: Number(reporte?.totalIngresos || 0) },
-      ...egresos.map(e => ({ Concepto: `Egreso: ${e.concepto}`, Monto: -Number(e.monto) })),
-      { Concepto: 'Total Egresos', Monto: -Number(reporte?.totalEgresos || 0) },
-      { Concepto: 'Saldo Neto', Monto: Number(reporte?.saldoNeto || 0) },
-    ];
-    exportarExcel(filas, [28, 14], `reporte_caja_${fechaDesde}_a_${fechaHasta}.xlsx`);
-  };
-
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingBottom: 8, borderBottom: '1px solid #E2ECF4', marginBottom: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Wallet size={14} color="#2563EB" />
-          <span style={{ fontSize: 11.5, fontWeight: 700, color: '#2563EB', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Reporte de caja
-          </span>
-        </div>
-        <Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} onClick={exportarReporteExcel}>
-          Exportar Excel
-        </Btn>
-      </div>
+    <SeccionCard titulo={`Egresos (${egresos.length})`} icono={TrendingDown} colorIcono="#DC2626"
+      accion={!nuevoEgreso && (
+        <Btn variant="ghost" size="sm" icon={<Plus size={13} />} onClick={() => setNuevoEgreso(emptyEgreso)}>Registrar egreso</Btn>
+      )}>
 
       <div className="resp-toolbar" style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 12, color: '#64748B' }}>Del</span>
@@ -202,44 +275,6 @@ function ReporteCaja() {
         <span style={{ fontSize: 12, color: '#64748B' }}>al</span>
         <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} min={fechaDesde || undefined}
           style={{ height: 34, padding: '0 10px', background: '#E1EBF5', border: '1px solid #C9DAEA', borderRadius: 6, fontSize: 13 }} />
-      </div>
-
-      {/* Ingresos por método */}
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#1E3A5F', marginBottom: 8 }}>Ingresos por método de pago</div>
-      <div className="resp-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 16 }}>
-        {Object.entries(METODOS).map(([k, v]) => (
-          <div key={k} style={{ padding: '10px 12px', borderRadius: 8, background: '#F8FAFC', border: `1px solid ${METODO_COLOR[k]}33` }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, color: METODO_COLOR[k], textTransform: 'uppercase' }}>{v}</div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#1E3A5F', fontFamily: 'monospace' }}>
-              S/ {Number(reporte?.porMetodo?.[k] || 0).toFixed(2)}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
-        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#15803D' }}>TOTAL INGRESOS</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#15803D', fontFamily: 'monospace' }}>S/ {Number(reporte?.totalIngresos || 0).toFixed(2)}</div>
-        </div>
-        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#DC2626' }}>TOTAL EGRESOS</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#DC2626', fontFamily: 'monospace' }}>S/ {Number(reporte?.totalEgresos || 0).toFixed(2)}</div>
-        </div>
-        <div style={{ flex: 1, minWidth: 140, padding: '12px 14px', borderRadius: 8, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#1E3A8A' }}>SALDO NETO</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#1E3A8A', fontFamily: 'monospace' }}>S/ {Number(reporte?.saldoNeto || 0).toFixed(2)}</div>
-        </div>
-      </div>
-
-      {/* Egresos */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#1E3A5F' }}>Egresos ({egresos.length})</div>
-        {!nuevoEgreso && (
-          <Btn variant="ghost" size="sm" icon={<Plus size={13} />} onClick={() => setNuevoEgreso(emptyEgreso)}>
-            Registrar egreso
-          </Btn>
-        )}
       </div>
 
       {nuevoEgreso && (
@@ -291,7 +326,87 @@ function ReporteCaja() {
           ))}
         </div>
       )}
-    </div>
+    </SeccionCard>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Pestaña: Clientes con deuda
+// ─────────────────────────────────────────────────────────────────
+function TabDeudores({ metodosPago, onSeleccionarContrato }) {
+  const [busqueda, setBusqueda] = useState('');
+  const contratosQ = useQuery({
+    queryKey: ['contratos'],
+    queryFn: () => contratosApi.listar().then(r => r.data),
+  });
+
+  const deudores = useMemo(() => {
+    return (contratosQ.data || [])
+      .filter(c => c.deudaPendiente > 0)
+      .sort((a, b) => (b.deudaVencida - a.deudaVencida) || (b.deudaPendiente - a.deudaPendiente));
+  }, [contratosQ.data]);
+
+  const deudoresFiltrados = useMemo(() => {
+    const texto = busqueda.trim().toLowerCase();
+    if (!texto) return deudores;
+    return deudores.filter(c => (
+      `${c.cliente?.nombres || ''} ${c.cliente?.apellidos || ''}`.toLowerCase().includes(texto) ||
+      (c.cliente?.dniRuc || '').toLowerCase().includes(texto) ||
+      (c.numero || '').toLowerCase().includes(texto)
+    ));
+  }, [deudores, busqueda]);
+
+  return (
+    <SeccionCard titulo={`Clientes con deuda (${deudoresFiltrados.length}${busqueda.trim() ? ` de ${deudores.length}` : ''})`} icono={AlertTriangle} colorIcono="#DC2626"
+      accion={<Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} disabled={deudores.length === 0} onClick={() => exportarDeudoresExcel(deudoresFiltrados)}>Exportar Excel</Btn>}>
+
+      {deudores.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 11px', height: 40, border: '1px solid #C9DAEA', borderRadius: 8, background: '#E1EBF5', marginBottom: 10 }}>
+          <Search size={15} color="#64748B" />
+          <input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre, apellido, DNI/RUC o N° contrato..."
+            style={{ border: 0, outline: 0, flex: 1, fontSize: 13, background: 'transparent', color: '#1E3A5F' }}
+          />
+          {busqueda && (
+            <button type="button" onClick={() => setBusqueda('')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {contratosQ.isLoading ? (
+        <p style={{ fontSize: 13, color: '#64748B' }}>Cargando...</p>
+      ) : deudores.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, color: '#15803D', fontSize: 13, fontWeight: 600 }}>
+          <CheckCircle2 size={15} /> Ningún cliente tiene deuda pendiente
+        </div>
+      ) : deudoresFiltrados.length === 0 ? (
+        <p style={{ fontSize: 13, color: '#64748B' }}>Sin resultados para "{busqueda}"</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflowY: 'auto' }}>
+          {deudoresFiltrados.map(c => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${c.deudaVencida ? '#FECACA' : '#FDE68A'}`, background: c.deudaVencida ? '#FEF2F2' : '#FFFBEB' }}>
+              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onSeleccionarContrato(c)}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1E3A5F' }}>{c.cliente?.nombres} {c.cliente?.apellidos}</div>
+                <div style={{ fontSize: 11, color: '#64748B' }}>{c.numero} · {c.mesesPendientes} mes{c.mesesPendientes !== 1 ? 'es' : ''} pendiente{c.mesesPendientes !== 1 ? 's' : ''}</div>
+              </div>
+              <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, color: c.deudaVencida ? '#DC2626' : '#B45309' }}>
+                S/ {Number(c.deudaPendiente).toFixed(2)}
+              </span>
+              {c.cliente?.telefono && (
+                <a href={linkWhatsapp(c.cliente.telefono, mensajeRecordatorio(c, metodosPago))} target="_blank" rel="noopener noreferrer" title="Enviar recordatorio"
+                  style={{ width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', border: '1px solid #C9DAEA', color: '#16A34A', flexShrink: 0 }}>
+                  <MessageCircle size={14} />
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </SeccionCard>
   );
 }
 
@@ -339,17 +454,20 @@ function BuscadorContrato({ value, label, onSelect }) {
   );
 }
 
-export default function Pagos() {
+const emptyCargoManual = { periodo: new Date().toISOString().slice(0, 7), monto: '', vencimiento: '' };
+
+// ─────────────────────────────────────────────────────────────────
+// Pestaña: Registrar cobro (incluye cobros parciales + generar deuda manual)
+// ─────────────────────────────────────────────────────────────────
+function TabRegistrarCobro({ contrato, setContrato }) {
   const qc = useQueryClient();
-  const [contrato, setContrato] = useState(null);
   const [seleccionados, setSeleccionados] = useState(new Set());
+  const [montoPagar, setMontoPagar] = useState('');
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [metodoPago, setMetodoPago] = useState('EFECTIVO');
   const [observacion, setObservacion] = useState('');
-  const [qHistorial, setQHistorial] = useState('');
-  const [fechaDesde, setFechaDesde] = useState('');
-  const [fechaHasta, setFechaHasta] = useState('');
-  const [metodoFiltro, setMetodoFiltro] = useState('');
+  const [mostrarCargoManual, setMostrarCargoManual] = useState(false);
+  const [cargoManual, setCargoManual] = useState(emptyCargoManual);
 
   const cargosQ = useQuery({
     queryKey: ['cargos-contrato', contrato?.id],
@@ -357,19 +475,243 @@ export default function Pagos() {
     enabled: Boolean(contrato),
   });
 
-  const contratosQ = useQuery({
-    queryKey: ['contratos'],
-    queryFn: () => contratosApi.listar().then(r => r.data),
+  const cargos = cargosQ.data || [];
+
+  const saldoSeleccionado = useMemo(
+    () => cargos.filter(c => seleccionados.has(c.id)).reduce((sum, c) => sum + Number(c.saldo), 0),
+    [cargos, seleccionados]
+  );
+
+  // Al cambiar la selección de meses, se propone pagar el total (el usuario puede bajarlo para un pago parcial)
+  useEffect(() => {
+    setMontoPagar(saldoSeleccionado > 0 ? saldoSeleccionado.toFixed(2) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saldoSeleccionado]);
+
+  const registrarM = useMutation({
+    mutationFn: () => pagosApi.crear({
+      contratoId: contrato.id, fecha, metodoPago, observacion,
+      monto: Number(montoPagar),
+      cargoIds: cargos.filter(c => seleccionados.has(c.id)).map(c => c.id),
+    }),
+    onSuccess: () => {
+      toast.success('Pago registrado');
+      setSeleccionados(new Set());
+      setObservacion('');
+      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+      qc.invalidateQueries({ queryKey: ['pagos'] });
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+      qc.invalidateQueries({ queryKey: ['pagos-reporte'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo registrar el pago'),
   });
 
-  const empresaQ = useQuery({ queryKey: ['empresa'], queryFn: () => empresaApi.obtener().then(r => r.data) });
-  const metodosPago = empresaQ.data?.metodosPago || [];
+  const crearCargoManualM = useMutation({
+    mutationFn: () => cargosApi.crearManual({ contratoId: contrato.id, ...cargoManual, monto: Number(cargoManual.monto) }),
+    onSuccess: () => {
+      toast.success('Deuda generada manualmente');
+      setMostrarCargoManual(false);
+      setCargoManual(emptyCargoManual);
+      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo generar el cargo'),
+  });
 
-  const deudores = useMemo(() => {
-    return (contratosQ.data || [])
-      .filter(c => c.deudaPendiente > 0)
-      .sort((a, b) => (b.deudaVencida - a.deudaVencida) || (b.deudaPendiente - a.deudaPendiente));
-  }, [contratosQ.data]);
+  const toggleCargo = (id) => {
+    setSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const seleccionarContrato = (c) => {
+    setContrato(c);
+    setSeleccionados(new Set());
+    setMostrarCargoManual(false);
+  };
+
+  const montoNumerico = Number(montoPagar);
+  const puedeRegistrar = contrato && seleccionados.size > 0 && fecha && metodoPago
+    && montoNumerico > 0 && montoNumerico <= saldoSeleccionado + 0.009 && !registrarM.isPending;
+
+  const cargoManualValido = cargoManual.periodo && Number(cargoManual.monto) > 0;
+
+  return (
+    <SeccionCard titulo="Registrar cobro" icono={ClipboardList}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Campo label="Cliente / Contrato" required>
+          <BuscadorContrato
+            value={contrato?.id}
+            label={contrato ? `${contrato.cliente?.nombres} ${contrato.cliente?.apellidos} — ${contrato.numero}` : ''}
+            onSelect={seleccionarContrato}
+          />
+        </Campo>
+
+        {contrato && (
+          <>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>Meses pendientes</label>
+                {!mostrarCargoManual && (
+                  <button type="button" onClick={() => setMostrarCargoManual(true)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: 'none', color: '#2563EB', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
+                    <PlusCircle size={13} /> Generar deuda manual
+                  </button>
+                )}
+              </div>
+
+              {mostrarCargoManual && (
+                <div style={{ border: '1px dashed #C9DAEA', borderRadius: 10, padding: 14, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div className="resp-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <Campo label="Período (mes)" required>
+                      <input type="month" style={campoInputStyle} value={cargoManual.periodo} onChange={e => setCargoManual({ ...cargoManual, periodo: e.target.value })} />
+                    </Campo>
+                    <Campo label="Monto (S/)" required>
+                      <input type="number" step="0.01" style={campoInputStyle} value={cargoManual.monto}
+                        onChange={e => setCargoManual({ ...cargoManual, monto: e.target.value })}
+                        placeholder={contrato.costoMensual ? Number(contrato.costoMensual).toFixed(2) : '80.00'} />
+                    </Campo>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <Btn variant="ghost" onClick={() => { setMostrarCargoManual(false); setCargoManual(emptyCargoManual); }}>Cancelar</Btn>
+                    <Btn disabled={!cargoManualValido || crearCargoManualM.isPending} loading={crearCargoManualM.isPending} onClick={() => crearCargoManualM.mutate()}>
+                      Generar cargo
+                    </Btn>
+                  </div>
+                </div>
+              )}
+
+              {cargosQ.isLoading ? (
+                <p style={{ fontSize: 13, color: '#64748B' }}>Cargando deuda...</p>
+              ) : cargos.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, color: '#15803D', fontSize: 13, fontWeight: 600 }}>
+                  <CheckCircle2 size={15} /> Este contrato no tiene deuda pendiente
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {cargos.map(c => {
+                    const esParcial = c.estado === 'PARCIAL';
+                    return (
+                      <label key={c.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                        border: `1.5px solid ${seleccionados.has(c.id) ? '#2563EB' : '#C9DAEA'}`,
+                        background: seleccionados.has(c.id) ? '#EFF6FF' : '#F8FAFC',
+                      }}>
+                        <input type="checkbox" checked={seleccionados.has(c.id)} onChange={() => toggleCargo(c.id)} />
+                        <div style={{ flex: 1 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{fmtPeriodo(c.periodo)}</span>
+                          {esParcial && (
+                            <div style={{ fontSize: 11, color: '#B45309' }}>Abonado S/ {(Number(c.monto) - Number(c.saldo)).toFixed(2)} de S/ {Number(c.monto).toFixed(2)}</div>
+                          )}
+                        </div>
+                        {c.vencido && <Badge color="red">Vencido</Badge>}
+                        {esParcial && <Badge color="yellow">Parcial</Badge>}
+                        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#1E3A5F' }}>S/ {Number(c.saldo).toFixed(2)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {cargos.length > 0 && seleccionados.size > 0 && (
+              <>
+                <div className="resp-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Campo label="Fecha de pago" required>
+                    <input type="date" style={campoInputStyle} value={fecha} onChange={e => setFecha(e.target.value)} />
+                  </Campo>
+                  <Campo label="Método de pago" required>
+                    <select style={campoInputStyle} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
+                      {Object.entries(METODOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </Campo>
+                </div>
+                <Campo label="Observación (opcional)">
+                  <input style={campoInputStyle} value={observacion} onChange={e => setObservacion(e.target.value)} placeholder="Referencia de transferencia, etc." />
+                </Campo>
+
+                <Campo label="Monto a pagar (S/)" required>
+                  <input type="number" step="0.01" style={{ ...campoInputStyle, fontWeight: 700, fontSize: 16 }}
+                    value={montoPagar} onChange={e => setMontoPagar(e.target.value)} max={saldoSeleccionado} />
+                  <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#8AAABB' }}>
+                    Deuda seleccionada: S/ {saldoSeleccionado.toFixed(2)}. Si pagas menos, el pago se aplica primero al mes más antiguo y el resto queda parcial.
+                  </p>
+                </Campo>
+
+                {montoNumerico > 0 && montoNumerico < saldoSeleccionado - 0.009 && (
+                  <div style={{ padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, fontSize: 12.5, color: '#92400E' }}>
+                    Pago parcial: quedará un saldo pendiente de S/ {(saldoSeleccionado - montoNumerico).toFixed(2)} en los meses seleccionados.
+                  </div>
+                )}
+
+                <Btn disabled={!puedeRegistrar} loading={registrarM.isPending} onClick={() => registrarM.mutate()} style={{ background: '#16A34A', fontWeight: 700 }}>
+                  Registrar cobro
+                </Btn>
+              </>
+            )}
+
+            <HistorialClientePago contratoId={contrato.id} />
+          </>
+        )}
+      </div>
+    </SeccionCard>
+  );
+}
+
+// Historial de pagos de un solo cliente/contrato (usado dentro de Registrar cobro)
+function HistorialClientePago({ contratoId }) {
+  const historialQ = useQuery({
+    queryKey: ['pagos', 'contrato', contratoId],
+    queryFn: () => pagosApi.listar({ contratoId }).then(r => r.data),
+    enabled: Boolean(contratoId),
+  });
+
+  const pagos = historialQ.data || [];
+
+  return (
+    <div>
+      <label style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F', display: 'block', marginBottom: 8 }}>
+        Historial de pagos de este cliente
+      </label>
+      {historialQ.isLoading ? (
+        <p style={{ fontSize: 13, color: '#64748B' }}>Cargando...</p>
+      ) : pagos.length === 0 ? (
+        <div style={{ padding: '10px 14px', background: '#F8FAFC', border: '1px solid var(--border)', borderRadius: 8, color: '#64748B', fontSize: 13 }}>
+          Este cliente aún no tiene pagos registrados
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {pagos.map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, color: '#1E3A5F' }}>
+                  {p.cargos.map(pc => fmtPeriodo(pc.cargo.periodo)).join(', ')}
+                </div>
+                <div style={{ fontSize: 11, color: '#8AAABB' }}>
+                  {fmtFecha(p.fecha)} · {p.usuario?.nombre} {p.usuario?.apellido}
+                </div>
+              </div>
+              <Badge color="blue">{METODOS[p.metodoPago]}</Badge>
+              <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#1E3A5F' }}>S/ {Number(p.monto).toFixed(2)}</span>
+              <Btn variant="ghost" size="sm" icon={<Download size={13} />} onClick={() => descargarComprobante(p.id, pagosApi)} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Pestaña: Historial de pagos (todos los clientes)
+// ─────────────────────────────────────────────────────────────────
+function TabHistorial() {
+  const [qHistorial, setQHistorial] = useState('');
+  const [fechaDesde, setFechaDesde] = useState('');
+  const [fechaHasta, setFechaHasta] = useState('');
+  const [metodoFiltro, setMetodoFiltro] = useState('');
 
   const historialQ = useQuery({
     queryKey: ['pagos', qHistorial, fechaDesde, fechaHasta, metodoFiltro],
@@ -381,197 +723,11 @@ export default function Pagos() {
     }).then(r => r.data),
   });
 
-  const generarM = useMutation({
-    mutationFn: () => cargosApi.generar(),
-    onSuccess: (res) => {
-      toast.success(`${res.data.creados} cargo(s) generado(s) para el período ${res.data.periodo}`);
-      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
-      qc.invalidateQueries({ queryKey: ['contratos'] });
-    },
-    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo generar los cargos'),
-  });
-
-  const registrarM = useMutation({
-    mutationFn: () => pagosApi.crear({
-      contratoId: contrato.id, fecha, metodoPago, observacion,
-      cargoIds: [...seleccionados],
-    }),
-    onSuccess: () => {
-      toast.success('Pago registrado');
-      setSeleccionados(new Set());
-      setObservacion('');
-      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
-      qc.invalidateQueries({ queryKey: ['pagos'] });
-      qc.invalidateQueries({ queryKey: ['contratos'] });
-    },
-    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo registrar el pago'),
-  });
-
-  const cargos = cargosQ.data || [];
   const pagos = historialQ.data || [];
 
-  const toggleCargo = (id) => {
-    setSeleccionados(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const montoTotal = useMemo(
-    () => cargos.filter(c => seleccionados.has(c.id)).reduce((sum, c) => sum + Number(c.monto), 0),
-    [cargos, seleccionados]
-  );
-
-  const seleccionarContrato = (c) => {
-    setContrato(c);
-    setSeleccionados(new Set());
-  };
-
-  const puedeRegistrar = contrato && seleccionados.size > 0 && fecha && metodoPago && !registrarM.isPending;
-
   return (
-    <div className="animate-fade resp-page-padding" style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'var(--blue-bg)', border: '1px solid var(--border)' }}>
-            <DollarSign size={19} color="var(--blue)" />
-          </div>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--txt)' }}>Pagos</h1>
-            <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--txt-3)' }}>Registro de cobros mensuales</p>
-          </div>
-        </div>
-        <Btn variant="ghost" icon={<RefreshCw size={14} />} disabled={generarM.isPending} onClick={() => generarM.mutate()}>
-          Generar cargos del mes
-        </Btn>
-      </div>
-
-      <ReporteCaja />
-
-      {/* ── Clientes con deuda ── */}
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingBottom: 8, borderBottom: '1px solid #E2ECF4', marginBottom: 14, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AlertTriangle size={14} color="#DC2626" />
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: '#DC2626', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Clientes con deuda ({deudores.length})
-            </span>
-          </div>
-          <Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} disabled={deudores.length === 0} onClick={() => exportarDeudoresExcel(deudores)}>
-            Exportar Excel
-          </Btn>
-        </div>
-
-        {contratosQ.isLoading ? (
-          <p style={{ fontSize: 13, color: '#64748B' }}>Cargando...</p>
-        ) : deudores.length === 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, color: '#15803D', fontSize: 13, fontWeight: 600 }}>
-            <CheckCircle2 size={15} /> Ningún cliente tiene deuda pendiente
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
-            {deudores.map(c => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${c.deudaVencida ? '#FECACA' : '#FDE68A'}`, background: c.deudaVencida ? '#FEF2F2' : '#FFFBEB' }}>
-                <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => seleccionarContrato(c)}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1E3A5F' }}>{c.cliente?.nombres} {c.cliente?.apellidos}</div>
-                  <div style={{ fontSize: 11, color: '#64748B' }}>{c.numero} · {c.mesesPendientes} mes{c.mesesPendientes !== 1 ? 'es' : ''} pendiente{c.mesesPendientes !== 1 ? 's' : ''}</div>
-                </div>
-                <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, color: c.deudaVencida ? '#DC2626' : '#B45309' }}>
-                  S/ {Number(c.deudaPendiente).toFixed(2)}
-                </span>
-                {c.cliente?.telefono && (
-                  <a href={linkWhatsapp(c.cliente.telefono, mensajeRecordatorio(c, metodosPago))} target="_blank" rel="noopener noreferrer" title="Enviar recordatorio"
-                    style={{ width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', border: '1px solid #C9DAEA', color: '#16A34A', flexShrink: 0 }}>
-                    <MessageCircle size={14} />
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Registrar cobro ── */}
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 24 }}>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: '#2563EB', textTransform: 'uppercase', letterSpacing: '0.05em', paddingBottom: 8, borderBottom: '1px solid #E2ECF4', marginBottom: 16 }}>
-          Registrar cobro
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Campo label="Cliente / Contrato" required>
-            <BuscadorContrato
-              value={contrato?.id}
-              label={contrato ? `${contrato.cliente?.nombres} ${contrato.cliente?.apellidos} — ${contrato.numero}` : ''}
-              onSelect={seleccionarContrato}
-            />
-          </Campo>
-
-          {contrato && (
-            <>
-              <Campo label="Meses pendientes">
-                {cargosQ.isLoading ? (
-                  <p style={{ fontSize: 13, color: '#64748B' }}>Cargando deuda...</p>
-                ) : cargos.length === 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, color: '#15803D', fontSize: 13, fontWeight: 600 }}>
-                    <CheckCircle2 size={15} /> Este contrato no tiene deuda pendiente
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {cargos.map(c => (
-                      <label key={c.id} style={{
-                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                        border: `1.5px solid ${seleccionados.has(c.id) ? '#2563EB' : '#C9DAEA'}`,
-                        background: seleccionados.has(c.id) ? '#EFF6FF' : '#F8FAFC',
-                      }}>
-                        <input type="checkbox" checked={seleccionados.has(c.id)} onChange={() => toggleCargo(c.id)} />
-                        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{fmtPeriodo(c.periodo)}</span>
-                        {c.vencido && <Badge color="red">Vencido</Badge>}
-                        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#1E3A5F' }}>S/ {Number(c.monto).toFixed(2)}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </Campo>
-
-              {cargos.length > 0 && (
-                <>
-                  <div className="resp-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                    <Campo label="Fecha de pago" required>
-                      <input type="date" style={campoInputStyle} value={fecha} onChange={e => setFecha(e.target.value)} />
-                    </Campo>
-                    <Campo label="Método de pago" required>
-                      <select style={campoInputStyle} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
-                        {Object.entries(METODOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                      </select>
-                    </Campo>
-                  </div>
-                  <Campo label="Observación (opcional)">
-                    <input style={campoInputStyle} value={observacion} onChange={e => setObservacion(e.target.value)} placeholder="Referencia de transferencia, etc." />
-                  </Campo>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#1E3A8A' }}>Monto a cobrar ({seleccionados.size} mes{seleccionados.size !== 1 ? 'es' : ''})</span>
-                    <span style={{ fontSize: 20, fontWeight: 800, color: '#1E3A8A', fontFamily: 'monospace' }}>S/ {montoTotal.toFixed(2)}</span>
-                  </div>
-
-                  <Btn disabled={!puedeRegistrar} loading={registrarM.isPending} onClick={() => registrarM.mutate()} style={{ background: '#16A34A', fontWeight: 700 }}>
-                    Registrar cobro
-                  </Btn>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── Historial ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--txt)' }}>Historial de pagos</div>
-        <Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} disabled={pagos.length === 0} onClick={() => exportarHistorialExcel(pagos)}>
-          Exportar Excel
-        </Btn>
-      </div>
+    <SeccionCard titulo="Historial de pagos" icono={ClipboardList}
+      accion={<Btn variant="ghost" size="sm" icon={<FileSpreadsheet size={13} />} disabled={pagos.length === 0} onClick={() => exportarHistorialExcel(pagos)}>Exportar Excel</Btn>}>
 
       <div className="resp-toolbar" style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
@@ -652,6 +808,197 @@ export default function Pagos() {
             );
           })}
         </div>
+      </div>
+    </SeccionCard>
+  );
+}
+
+const TABS = [
+  { key: 'deudores', label: 'Clientes con deuda', icon: AlertTriangle },
+  { key: 'cobro', label: 'Registrar cobro', icon: ClipboardList },
+  { key: 'egresos', label: 'Registrar egresos', icon: TrendingDown },
+  { key: 'historial', label: 'Historial de pagos', icon: FileSpreadsheet },
+];
+
+function ModalGenerarCargos({ open, onClose, onGenerado }) {
+  const [exonerados, setExonerados] = useState({});
+  const [descuentos, setDescuentos] = useState({});
+  const [busqueda, setBusqueda] = useState('');
+
+  const previewQ = useQuery({
+    queryKey: ['cargos-preview'],
+    queryFn: () => cargosApi.preview().then(r => r.data),
+    enabled: open,
+  });
+
+  useEffect(() => {
+    if (open) { setExonerados({}); setDescuentos({}); setBusqueda(''); }
+  }, [open]);
+
+  const generarM = useMutation({
+    mutationFn: () => cargosApi.generar({
+      exonerarIds: Object.keys(exonerados).filter(id => exonerados[id]),
+      descuentos: Object.fromEntries(Object.entries(descuentos).filter(([, v]) => Number(v) > 0)),
+    }),
+    onSuccess: (res) => {
+      toast.success(`${res.data.creados} cargo(s) generado(s) para el período ${res.data.periodo}`);
+      onGenerado();
+      onClose();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo generar los cargos'),
+  });
+
+  const contratos = previewQ.data?.contratos || [];
+  const cantidadExonerados = Object.values(exonerados).filter(Boolean).length;
+  const aCobrar = contratos.length - cantidadExonerados;
+
+  const contratosFiltrados = useMemo(() => {
+    const texto = busqueda.trim().toLowerCase();
+    if (!texto) return contratos;
+    return contratos.filter(c => c.numero.toLowerCase().includes(texto) || c.cliente.toLowerCase().includes(texto));
+  }, [contratos, busqueda]);
+
+  return (
+    <Modal open={open} onClose={onClose} title="Generar cargos del mes" subtitle={previewQ.data ? `Período ${previewQ.data.periodo} · ${contratos.length} elegible(s) · ${aCobrar} a cobrar${cantidadExonerados ? ` · ${cantidadExonerados} exonerado(s)` : ''}` : ''} width={620}>
+      {previewQ.isLoading && <p style={{ fontSize: 13, color: 'var(--txt-3)' }}>Cargando contratos elegibles...</p>}
+      {!previewQ.isLoading && contratos.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--txt-3)' }}>No hay contratos pendientes de generar cargo este mes.</p>
+      )}
+      {contratos.length > 0 && (
+        <>
+          <p style={{ fontSize: 12.5, color: 'var(--txt-3)', marginTop: 0 }}>
+            Marca "Exonerar" para no cobrarle este mes, o pon un % de descuento puntual. Los demás se generan con su monto normal.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 11px', height: 38, border: '1px solid var(--border-2)', borderRadius: 8, background: '#E1EBF5', marginBottom: 10 }}>
+            <Search size={14} color="#64748B" />
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por cliente o N° de contrato..."
+              style={{ border: 0, outline: 0, flex: 1, fontSize: 13, background: 'transparent', color: '#1E3A5F' }}
+            />
+            {busqueda && (
+              <button type="button" onClick={() => setBusqueda('')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-2, #F3F6FA)', position: 'sticky', top: 0 }}>
+                  <th style={{ textAlign: 'left', padding: '8px 10px' }}>Contrato</th>
+                  <th style={{ textAlign: 'left', padding: '8px 10px' }}>Cliente</th>
+                  <th style={{ textAlign: 'right', padding: '8px 10px' }}>Monto</th>
+                  <th style={{ textAlign: 'center', padding: '8px 10px' }}>Exonerar</th>
+                  <th style={{ textAlign: 'center', padding: '8px 10px' }}>Descuento %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contratosFiltrados.length === 0 && (
+                  <tr><td colSpan={5} style={{ padding: '14px 10px', textAlign: 'center', color: 'var(--txt-3)' }}>Sin resultados para "{busqueda}"</td></tr>
+                )}
+                {contratosFiltrados.map(c => (
+                  <tr key={c.contratoId} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{c.numero}</td>
+                    <td style={{ padding: '6px 10px' }}>{c.cliente}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>S/ {c.monto.toFixed(2)}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(exonerados[c.contratoId])}
+                        onChange={(e) => setExonerados(prev => ({ ...prev, [c.contratoId]: e.target.checked }))}
+                      />
+                    </td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                      <input
+                        type="number" min={0} max={100} step={1}
+                        disabled={Boolean(exonerados[c.contratoId])}
+                        value={descuentos[c.contratoId] || ''}
+                        onChange={(e) => setDescuentos(prev => ({ ...prev, [c.contratoId]: e.target.value }))}
+                        style={{ width: 60, height: 28, textAlign: 'center', border: '1px solid var(--border-2)', borderRadius: 6 }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+        <Btn disabled={generarM.isPending || previewQ.isLoading} onClick={() => generarM.mutate()}>
+          {contratos.length > 0
+            ? `Generar (${aCobrar} a cobrar${cantidadExonerados ? ` + ${cantidadExonerados} exonerado(s)` : ''})`
+            : 'Generar'}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+export default function Pagos() {
+  const qc = useQueryClient();
+  const [tab, setTab] = useState('deudores');
+  const [contrato, setContrato] = useState(null);
+  const [modalCargosAbierto, setModalCargosAbierto] = useState(false);
+
+  const empresaQ = useQuery({ queryKey: ['empresa'], queryFn: () => empresaApi.obtener().then(r => r.data) });
+  const metodosPago = empresaQ.data?.metodosPago || [];
+
+  return (
+    <div className="animate-fade resp-page-padding" style={{ padding: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'var(--blue-bg)', border: '1px solid var(--border)' }}>
+            <DollarSign size={19} color="var(--blue)" />
+          </div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--txt)' }}>Pagos</h1>
+            <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--txt-3)' }}>Registro de cobros mensuales</p>
+          </div>
+        </div>
+        <Btn variant="ghost" icon={<RefreshCw size={14} />} onClick={() => setModalCargosAbierto(true)}>
+          Generar cargos del mes
+        </Btn>
+      </div>
+
+      <ModalGenerarCargos
+        open={modalCargosAbierto}
+        onClose={() => setModalCargosAbierto(false)}
+        onGenerado={() => {
+          qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+          qc.invalidateQueries({ queryKey: ['contratos'] });
+          qc.invalidateQueries({ queryKey: ['cargos-preview'] });
+        }}
+      />
+
+      <ReporteCaja />
+
+      <div className="resp-toolbar" style={{ display: 'flex', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        {TABS.map(t => {
+          const Icon = t.icon;
+          const activo = tab === t.key;
+          return (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              display: 'flex', alignItems: 'center', gap: 7, padding: '10px 16px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              border: '1px solid', background: activo ? '#1E3A8A' : '#fff', color: activo ? '#fff' : '#5A7A9A',
+              borderColor: activo ? '#1E3A8A' : 'var(--border-2)',
+            }}>
+              <Icon size={14} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        {tab === 'deudores' && (
+          <TabDeudores metodosPago={metodosPago} onSeleccionarContrato={(c) => { setContrato(c); setTab('cobro'); }} />
+        )}
+        {tab === 'cobro' && <TabRegistrarCobro contrato={contrato} setContrato={setContrato} />}
+        {tab === 'egresos' && <TabEgresos />}
+        {tab === 'historial' && <TabHistorial />}
       </div>
     </div>
   );

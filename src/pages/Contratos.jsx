@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { FileText, Plus, Pencil, Search, X } from 'lucide-react';
+import { FileText, Plus, Pencil, Search, X, Upload, Download, FileSpreadsheet } from 'lucide-react';
 import { clientesApi, contratosApi, planesApi, puntosRedApi, productosApi, tecnicosApi } from '../services/api';
 import { Btn, Badge, Modal, Table, Tr, Td } from '../components/ui';
 import ContratoDrawer from '../components/ContratoDrawer';
@@ -11,6 +11,89 @@ import { tipoLabel } from '../utils/tiposOrden';
 function fmtFecha(f) {
   if (!f) return '—';
   return new Date(f).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// ── Plantilla de Excel para importar/exportar contratos ──────────
+const COLUMNAS_PLANTILLA = [
+  'Contrato', 'Doc Identidad', 'Abonado', 'Direccion', 'Referencia', 'Sector',
+  'Tipo de servicio', 'nombre del plan', 'dia de corte', 'telefono', 'Cintillo', 'Punto de red',
+];
+
+function descargarPlantilla() {
+  import('xlsx').then(XLSX => {
+    const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_PLANTILLA]);
+    ws['!cols'] = [14, 14, 28, 24, 20, 14, 16, 20, 12, 14, 14, 14].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
+    XLSX.writeFile(wb, 'plantilla_contratos.xlsx');
+  });
+}
+
+function exportarContratosExcel(contratos) {
+  import('xlsx').then(XLSX => {
+    const rows = contratos.map(c => ([
+      c.numero,
+      c.cliente?.dniRuc?.startsWith('SINDOC-') ? '' : (c.cliente?.dniRuc || ''),
+      `${c.cliente?.nombres || ''} ${c.cliente?.apellidos || ''}`.trim(),
+      c.direccion || '',
+      c.referencia || '',
+      c.sector || '',
+      c.tipoServicio || '',
+      c.plan?.nombre || '',
+      c.diaCorte || '',
+      c.cliente?.telefono || '',
+      c.precinto || '',
+      c.puntoRed?.codigo || '',
+    ]));
+    const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_PLANTILLA, ...rows]);
+    ws['!cols'] = [14, 14, 28, 24, 20, 14, 16, 20, 12, 14, 14, 14].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
+    XLSX.writeFile(wb, `contratos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  });
+}
+
+const CLAVE_POR_ENCABEZADO = {
+  'contrato': 'contrato',
+  'doc identidad': 'docIdentidad',
+  'abonado': 'abonado',
+  'direccion': 'direccion',
+  'dirección': 'direccion',
+  'referencia': 'referencia',
+  'sector': 'sector',
+  'tipo de servicio': 'tipoServicio',
+  'nombre del plan': 'nombrePlan',
+  'dia de corte': 'diaCorte',
+  'día de corte': 'diaCorte',
+  'telefono': 'telefono',
+  'teléfono': 'telefono',
+  'cintillo': 'cintillo',
+  'punto de red': 'puntoRed',
+};
+
+function parsearExcelContratos(file) {
+  return import('xlsx').then(XLSX => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const filasCrudas = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        const [encabezados, ...datos] = filasCrudas;
+        const claves = encabezados.map(h => CLAVE_POR_ENCABEZADO[String(h).trim().toLowerCase()] || null);
+        const filas = datos
+          .filter(fila => fila.some(v => String(v).trim() !== ''))
+          .map(fila => {
+            const obj = {};
+            claves.forEach((clave, i) => { if (clave) obj[clave] = fila[i]; });
+            return obj;
+          });
+        resolve(filas);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  }));
 }
 
 const TIPOS_SERVICIO = { INTERNET: 'Internet', CABLE: 'Cable', DUO: 'Dúo' };
@@ -55,13 +138,47 @@ const emptyForm = {
   estado: 'ACTIVO', motivoBaja: '', fechaBaja: '',
 };
 
+function FormNuevoCliente({ nombreInicial, onCreado, onCancelar }) {
+  const qc = useQueryClient();
+  const [datos, setDatos] = useState({ nombres: nombreInicial || '', apellidos: '', dniRuc: '', telefono: '' });
+
+  const crearM = useMutation({
+    mutationFn: () => clientesApi.crear(datos).then(r => r.data),
+    onSuccess: (cliente) => {
+      toast.success('Cliente creado');
+      qc.invalidateQueries({ queryKey: ['clientes-buscar'] });
+      onCreado(cliente);
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo crear el cliente'),
+  });
+
+  const valido = datos.nombres.trim() && /^\d{8}(\d{3})?$/.test(datos.dniRuc.trim());
+
+  return (
+    <div style={{ border: '1px solid #C9DAEA', borderRadius: 8, marginTop: 6, padding: 12, background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1E3A5F' }}>Crear nuevo cliente</span>
+      <input value={datos.nombres} onChange={e => setDatos({ ...datos, nombres: e.target.value })} placeholder="Nombres *" style={campoInputStyle} />
+      <input value={datos.apellidos} onChange={e => setDatos({ ...datos, apellidos: e.target.value })} placeholder="Apellidos" style={campoInputStyle} />
+      <input value={datos.dniRuc} onChange={e => setDatos({ ...datos, dniRuc: e.target.value })} placeholder="DNI (8 dígitos) o RUC (11 dígitos) *" style={campoInputStyle} />
+      <input value={datos.telefono} onChange={e => setDatos({ ...datos, telefono: e.target.value })} placeholder="Teléfono" style={campoInputStyle} />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Btn type="button" variant="ghost" size="sm" onClick={onCancelar}>Cancelar</Btn>
+        <Btn type="button" size="sm" disabled={!valido || crearM.isPending} onClick={() => crearM.mutate()}>Crear y seleccionar</Btn>
+      </div>
+    </div>
+  );
+}
+
 function BuscadorCliente({ value, label, onSelect }) {
   const [q, setQ] = useState('');
+  const [creando, setCreando] = useState(false);
   const clientesQ = useQuery({
     queryKey: ['clientes-buscar', q],
     queryFn: () => clientesApi.listar({ q: q || undefined }).then(r => r.data),
     enabled: q.trim().length > 0,
   });
+
+  const sinResultados = q.trim() && !clientesQ.isLoading && (clientesQ.data || []).length === 0;
 
   return (
     <div>
@@ -74,7 +191,7 @@ function BuscadorCliente({ value, label, onSelect }) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 11px', height: 40, border: '1px solid #C9DAEA', borderRadius: 8, background: '#E1EBF5' }}>
             <Search size={15} color="#64748B" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por nombre o DNI/RUC..." style={{ border: 0, outline: 0, flex: 1, fontSize: 13, background: 'transparent', color: '#1E3A5F' }} />
+            <input value={q} onChange={e => { setQ(e.target.value); setCreando(false); }} placeholder="Buscar por nombre o DNI/RUC..." style={{ border: 0, outline: 0, flex: 1, fontSize: 13, background: 'transparent', color: '#1E3A5F' }} />
           </div>
           {q.trim() && (clientesQ.data || []).length > 0 && (
             <div style={{ border: '1px solid #C9DAEA', borderRadius: 8, marginTop: 6, maxHeight: 180, overflowY: 'auto', background: '#fff' }}>
@@ -86,6 +203,19 @@ function BuscadorCliente({ value, label, onSelect }) {
                 </button>
               ))}
             </div>
+          )}
+          {sinResultados && !creando && (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '9px 12px', border: '1px dashed #C9DAEA', borderRadius: 8 }}>
+              <span style={{ fontSize: 12.5, color: '#64748B' }}>Sin resultados para "{q}"</span>
+              <Btn type="button" size="sm" icon={<Plus size={13} />} onClick={() => setCreando(true)}>Crear cliente</Btn>
+            </div>
+          )}
+          {creando && (
+            <FormNuevoCliente
+              nombreInicial={q}
+              onCancelar={() => setCreando(false)}
+              onCreado={(cliente) => { setCreando(false); onSelect(cliente); }}
+            />
           )}
         </div>
       )}
@@ -99,6 +229,11 @@ export default function Contratos() {
   const [drawerId, setDrawerId] = useState(null);
   const [q, setQ] = useState('');
   const [estadoFiltro, setEstadoFiltro] = useState('');
+  const [deudaFiltro, setDeudaFiltro] = useState('');
+  const [pagina, setPagina] = useState(1);
+  const POR_PAGINA = 25;
+  const [resultadoImport, setResultadoImport] = useState(null);
+  const inputImportarRef = useRef(null);
 
   const contratosQ = useQuery({
     queryKey: ['contratos', q, estadoFiltro],
@@ -134,7 +269,44 @@ export default function Contratos() {
     onError: (e) => toast.error(e.response?.data?.error || 'No se pudo guardar el contrato'),
   });
 
+  const importarM = useMutation({
+    mutationFn: (filas) => contratosApi.importar(filas).then(r => r.data),
+    onSuccess: (data) => {
+      setResultadoImport(data);
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+      if (data.creados > 0) toast.success(`${data.creados} contrato(s) importado(s)`);
+      else toast('No se importó ningún contrato nuevo', { icon: '⚠️' });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo importar el archivo'),
+  });
+
+  const manejarArchivoImportar = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const filas = await parsearExcelContratos(file);
+      if (filas.length === 0) { toast.error('El archivo no tiene filas para importar'); return; }
+      importarM.mutate(filas);
+    } catch (err) {
+      console.error(err);
+      toast.error('No se pudo leer el archivo. Verifica que sea un Excel válido.');
+    }
+  };
+
   const contratos = contratosQ.data || [];
+
+  const contratosFiltrados = useMemo(() => {
+    if (deudaFiltro === 'aldia') return contratos.filter(c => !(c.deudaPendiente > 0));
+    if (deudaFiltro === 'condeuda') return contratos.filter(c => c.deudaPendiente > 0);
+    return contratos;
+  }, [contratos, deudaFiltro]);
+
+  const totalPaginas = Math.max(1, Math.ceil(contratosFiltrados.length / POR_PAGINA));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const contratosPagina = contratosFiltrados.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
+
+  useEffect(() => { setPagina(1); }, [q, estadoFiltro, deudaFiltro]);
 
   const abrirNuevo = () => setModal(emptyForm);
   const abrirEditar = (c) => setModal({
@@ -182,7 +354,15 @@ export default function Contratos() {
             <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--txt-3)' }}>Contratos de Internet, Cable y Dúo</p>
           </div>
         </div>
-        <Btn variant="primary" icon={<Plus size={14} />} onClick={abrirNuevo}>Nuevo contrato</Btn>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Btn variant="ghost" icon={<Download size={14} />} onClick={descargarPlantilla}>Plantilla</Btn>
+          <Btn variant="ghost" icon={<FileSpreadsheet size={14} />} disabled={contratosFiltrados.length === 0} onClick={() => exportarContratosExcel(contratosFiltrados)}>Exportar</Btn>
+          <Btn variant="ghost" icon={<Upload size={14} />} disabled={importarM.isPending} loading={importarM.isPending} onClick={() => inputImportarRef.current?.click()}>
+            Importar Excel
+          </Btn>
+          <input ref={inputImportarRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={manejarArchivoImportar} />
+          <Btn variant="primary" icon={<Plus size={14} />} onClick={abrirNuevo}>Nuevo contrato</Btn>
+        </div>
       </div>
 
       <div className="resp-toolbar" style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -196,14 +376,25 @@ export default function Contratos() {
           <option value="">Todos los estados</option>
           {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
+        <select value={deudaFiltro} onChange={e => setDeudaFiltro(e.target.value)}
+          style={{ height: 36, padding: '0 12px', background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 6, color: 'var(--txt)', fontSize: 13, minWidth: 160 }}>
+          <option value="">Todos (deuda)</option>
+          <option value="aldia">Al día</option>
+          <option value="condeuda">Con deuda</option>
+        </select>
       </div>
+
+      <p style={{ fontSize: 12, color: 'var(--txt-3)', margin: '0 0 10px' }}>
+        {contratosFiltrados.length} contrato{contratosFiltrados.length !== 1 ? 's' : ''}
+        {contratosFiltrados.length !== contratos.length ? ` de ${contratos.length} totales` : ''}
+      </p>
 
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
         <div className="resp-table">
         <Table loading={contratosQ.isLoading} headers={['N° Contrato', 'Abonado', 'DNI', 'Dirección / Sector', 'Celular', 'Plan', 'Estado', 'Deuda', 'Última actividad', '']}>
-          {contratos.length === 0 ? (
+          {contratosPagina.length === 0 ? (
             <tr><td colSpan={10} style={{ padding: 28, textAlign: 'center', color: 'var(--txt-3)', fontSize: 13 }}>Sin contratos registrados</td></tr>
-          ) : contratos.map(c => (
+          ) : contratosPagina.map(c => (
             <Tr key={c.id} onClick={() => setDrawerId(c.id)} style={{ cursor: 'pointer' }}>
               <Td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--blue)' }}>{c.numero}</Td>
               <Td style={{ fontWeight: 600 }}>{c.cliente?.nombres} {c.cliente?.apellidos}</Td>
@@ -241,9 +432,9 @@ export default function Contratos() {
         </div>
 
         <div className="resp-cards">
-          {contratos.length === 0 ? (
+          {contratosPagina.length === 0 ? (
             <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--txt-3)', fontSize: 13 }}>Sin contratos registrados</div>
-          ) : contratos.map(c => (
+          ) : contratosPagina.map(c => (
             <div key={c.id} className="resp-card" onClick={() => setDrawerId(c.id)}>
               <div className="resp-card-top">
                 <div>
@@ -273,6 +464,18 @@ export default function Contratos() {
           ))}
         </div>
       </div>
+
+      {totalPaginas > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 16 }}>
+          <Btn variant="ghost" size="sm" disabled={paginaSegura <= 1} onClick={() => setPagina(p => Math.max(1, p - 1))}>
+            Anterior
+          </Btn>
+          <span style={{ fontSize: 13, color: 'var(--txt-3)' }}>Página {paginaSegura} de {totalPaginas}</span>
+          <Btn variant="ghost" size="sm" disabled={paginaSegura >= totalPaginas} onClick={() => setPagina(p => Math.min(totalPaginas, p + 1))}>
+            Siguiente
+          </Btn>
+        </div>
+      )}
 
       <Modal open={Boolean(modal)} onClose={() => setModal(null)} title={modal?.id ? `Editar contrato` : 'Nuevo contrato'} width={620}>
         {modal && (
@@ -429,6 +632,51 @@ export default function Contratos() {
         onCerrar={() => setDrawerId(null)}
         onEditar={(c) => { setDrawerId(null); abrirEditar(c); }}
       />
+
+      <Modal open={Boolean(resultadoImport)} onClose={() => setResultadoImport(null)} title="Resultado de la importación" width={520}>
+        {resultadoImport && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1, padding: '12px 14px', borderRadius: 8, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#15803D' }}>CREADOS</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#15803D' }}>{resultadoImport.creados}</div>
+              </div>
+              <div style={{ flex: 1, padding: '12px 14px', borderRadius: 8, background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#B45309' }}>OMITIDOS</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#B45309' }}>{resultadoImport.omitidos.length}</div>
+              </div>
+              <div style={{ flex: 1, padding: '12px 14px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#DC2626' }}>ERRORES</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#DC2626' }}>{resultadoImport.errores.length}</div>
+              </div>
+            </div>
+
+            {resultadoImport.omitidos.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#B45309', marginBottom: 6 }}>Omitidos</div>
+                <div style={{ maxHeight: 140, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {resultadoImport.omitidos.map((o, i) => (
+                    <div key={i} style={{ fontSize: 12, color: '#64748B' }}>Fila {o.fila}: {o.motivo}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {resultadoImport.errores.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 6 }}>Errores</div>
+                <div style={{ maxHeight: 140, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {resultadoImport.errores.map((o, i) => (
+                    <div key={i} style={{ fontSize: 12, color: '#64748B' }}>Fila {o.fila}: {o.motivo}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Btn onClick={() => setResultadoImport(null)} style={{ alignSelf: 'flex-end' }}>Cerrar</Btn>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
