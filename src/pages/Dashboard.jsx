@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PiggyBank, ChevronDown } from 'lucide-react';
+import { PiggyBank, ChevronDown, FileSpreadsheet, X } from 'lucide-react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, LabelList,
 } from 'recharts';
-import api from '../services/api.js';
+import api, { contratosApi } from '../services/api.js';
 import { tipoLabel } from '../utils/tiposOrden';
+import { Modal, Btn } from '../components/ui';
 
 const ESTADOS_ORDEN = {
   PENDIENTE:  { label: 'Pendiente',  bg: '#FEF3C7', color: '#92400E' },
@@ -141,6 +142,162 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
+// ─── Gráfico de Morosos (clientes con deuda, agrupados por meses pendientes) ──
+const BUCKETS_MOROSOS = [
+  { key: '1', label: '1 mes',       color: '#16A34A', bg: '#F0FDF4', filtro: c => c.mesesPendientes === 1 },
+  { key: '2', label: '2 meses',     color: '#D97706', bg: '#FFFBEB', filtro: c => c.mesesPendientes === 2 },
+  { key: '3+', label: '3+ meses',   color: '#DC2626', bg: '#FEF2F2', filtro: c => c.mesesPendientes >= 3 },
+];
+
+function exportarExcelSimple(rows, columnas, nombreArchivo) {
+  import('xlsx').then(XLSX => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    if (columnas) ws['!cols'] = columnas.map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Datos');
+    XLSX.writeFile(wb, nombreArchivo);
+  });
+}
+
+function exportarMorososExcel(clientes, bucketLabel) {
+  const rows = clientes.map(c => ({
+    'Contrato': c.numero,
+    'Cliente': `${c.cliente?.nombres || ''} ${c.cliente?.apellidos || ''}`.trim(),
+    'DNI/RUC': c.cliente?.dniRuc || '',
+    'Celular': c.cliente?.telefono || '',
+    'Dirección': c.direccion || '',
+    'Meses pendientes': c.mesesPendientes,
+    'Deuda (S/)': Number(c.deudaPendiente),
+    'Vencido': c.deudaVencida ? 'Sí' : 'No',
+    'Día de corte': c.diaCorte || '',
+  }));
+  exportarExcelSimple(rows, [14, 24, 12, 12, 26, 16, 12, 10, 12], `morosos_${bucketLabel.replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function ModalMorosos({ bucket, clientes, onClose }) {
+  if (!bucket) return null;
+  return (
+    <Modal open={Boolean(bucket)} onClose={onClose} title={`Morosos · ${bucket.label}`} subtitle={`${clientes.length} cliente(s)`} width={720}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        <Btn size="sm" icon={<FileSpreadsheet size={13} />} disabled={clientes.length === 0} onClick={() => exportarMorososExcel(clientes, bucket.label)}>
+          Exportar Excel
+        </Btn>
+      </div>
+      {clientes.length === 0 ? (
+        <p style={{ fontSize: 13, color: '#64748B' }}>No hay clientes en este grupo.</p>
+      ) : (
+        <div style={{ maxHeight: 420, overflowY: 'auto', border: '1px solid #E2ECF4', borderRadius: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0 }}>
+                <th style={{ textAlign: 'left', padding: '8px 10px' }}>Contrato</th>
+                <th style={{ textAlign: 'left', padding: '8px 10px' }}>Cliente</th>
+                <th style={{ textAlign: 'left', padding: '8px 10px' }}>DNI/RUC</th>
+                <th style={{ textAlign: 'left', padding: '8px 10px' }}>Celular</th>
+                <th style={{ textAlign: 'center', padding: '8px 10px' }}>Meses</th>
+                <th style={{ textAlign: 'right', padding: '8px 10px' }}>Deuda</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clientes.map(c => (
+                <tr key={c.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                  <td style={{ padding: '7px 10px', fontFamily: 'monospace' }}>{c.numero}</td>
+                  <td style={{ padding: '7px 10px' }}>{c.cliente?.nombres} {c.cliente?.apellidos}</td>
+                  <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#64748B' }}>{c.cliente?.dniRuc || '—'}</td>
+                  <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#64748B' }}>{c.cliente?.telefono || '—'}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>{c.mesesPendientes}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: c.deudaVencida ? '#DC2626' : '#0D1B2A' }}>
+                    S/ {Number(c.deudaPendiente).toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function GraficaMorosos() {
+  const [bucketKey, setBucketKey] = useState(null);
+
+  const contratosQ = useQuery({
+    queryKey: ['contratos'],
+    queryFn: () => contratosApi.listar().then(r => r.data),
+  });
+
+  const deudores = useMemo(() => (contratosQ.data || []).filter(c => c.deudaPendiente > 0), [contratosQ.data]);
+
+  const chartData = useMemo(() => BUCKETS_MOROSOS.map(b => ({
+    key: b.key,
+    label: b.label,
+    color: b.color,
+    cantidad: deudores.filter(b.filtro).length,
+  })), [deudores]);
+
+  const bucketActivo = BUCKETS_MOROSOS.find(b => b.key === bucketKey) || null;
+  const clientesBucket = useMemo(() => bucketActivo ? deudores.filter(bucketActivo.filtro) : [], [bucketActivo, deudores]);
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #F1F5F9', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', padding: '16px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0D1B2A', margin: 0 }}>Morosos</h3>
+        <span style={{ fontSize: 11, color: '#94A3B8' }}>{deudores.length} cliente(s) con deuda</span>
+      </div>
+      <p style={{ fontSize: 11.5, color: '#94A3B8', margin: '2px 0 8px' }}>Clic en una barra para ver el detalle</p>
+
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={chartData} margin={{ top: 18, right: 10, left: 0, bottom: 5 }} barCategoryGap="30%">
+          <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B', fontWeight: 600 }} axisLine={false} tickLine={false} />
+          <YAxis hide allowDecimals={false} />
+          <Tooltip
+            cursor={{ fill: 'rgba(0,0,0,0.03)' }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const d = payload[0].payload;
+              return (
+                <div style={{ background: '#1E293B', borderRadius: 10, padding: '8px 14px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+                  <p style={{ fontSize: 11, color: '#94A3B8', margin: '0 0 4px' }}>{d.label}</p>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0 }}>{d.cantidad} cliente(s)</p>
+                </div>
+              );
+            }}
+          />
+          <Bar
+            dataKey="cantidad" maxBarSize={70} cursor="pointer"
+            isAnimationActive={false}
+            onClick={(d) => d?.cantidad > 0 && setBucketKey(d.key)}
+            shape={(props) => {
+              const { x, y, width, height, payload } = props;
+              const r = Math.min(6, width / 2, height || 0);
+              const h = Math.max(height, 0);
+              const path = h <= r
+                ? `M${x},${y + h} L${x},${y} L${x + width},${y} L${x + width},${y + h} Z`
+                : `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} L${x + width},${y + h} Z`;
+              return <path d={path} fill={payload.color} />;
+            }}
+          >
+            <LabelList dataKey="cantidad" position="top" style={{ fontSize: 13, fontWeight: 800, fill: '#0D1B2A' }} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+
+      <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 4 }}>
+        {BUCKETS_MOROSOS.map(b => (
+          <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: b.color }} />
+            <span style={{ fontSize: 11, color: '#64748B' }}>{b.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <ModalMorosos bucket={bucketActivo} clientes={clientesBucket} onClose={() => setBucketKey(null)} />
+    </div>
+  );
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────
 export default function Dashboard() {
   const [periodo, setPeriodo] = useState('7d');
@@ -213,6 +370,9 @@ export default function Dashboard() {
           </AreaChart>
         </ResponsiveContainer>
       </div>
+
+      {/* ── Gráfico de morosos ── */}
+      <GraficaMorosos />
 
       {/* ── Últimas 5 Órdenes ── */}
       <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #F1F5F9', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
