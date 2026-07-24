@@ -4,8 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { X, Pencil, Calendar, Copy, UserCheck, Play, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ordenesApi, tecnicosApi, puntosRedApi, productosApi } from '../services/api';
-import { Spinner, Badge, Btn } from './ui';
+import { ordenesApi, tecnicosApi, puntosRedApi, productosApi, cargosApi } from '../services/api';
+import { Spinner, Badge, Btn, Modal } from './ui';
 import { tipoLabel } from '../utils/tiposOrden';
 
 const inputMini = {
@@ -29,6 +29,66 @@ function fmtFechaHora(f) {
   if (!f) return '—';
   return new Date(f).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+function fmtPeriodo(p) {
+  const [anio, mes] = p.split('-').map(Number);
+  return new Date(anio, mes - 1, 1).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+}
+
+function ModalMesesSaltados({ data, onClose, onResuelto }) {
+  const [seleccionados, setSeleccionados] = useState(new Set());
+
+  useEffect(() => {
+    if (data) setSeleccionados(new Set(data.periodos));
+  }, [data]);
+
+  const cobrarM = useMutation({
+    mutationFn: () => cargosApi.generarSaltados({ contratoId: data.contratoId, periodos: Array.from(seleccionados) }),
+    onSuccess: (res) => {
+      toast.success(`${res.data.creados} mes(es) cobrado(s)`);
+      onResuelto();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo generar el cobro'),
+  });
+
+  const descartarM = useMutation({
+    mutationFn: () => cargosApi.descartarSaltados(data.contratoId),
+    onSuccess: () => { toast.success('No se cobrarán esos meses'); onResuelto(); },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo descartar'),
+  });
+
+  if (!data) return null;
+
+  return (
+    <Modal open={Boolean(data)} onClose={onClose} title="Reconexión: meses sin cobrar" width={460}>
+      <p style={{ fontSize: 13, color: 'var(--txt-3)', marginTop: 0 }}>
+        Este contrato estuvo cortado y estos meses nunca se facturaron. ¿Quieres cobrarlos ahora?
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {data.periodos.map(p => (
+          <label key={p} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', border: '1px solid var(--border-2)', borderRadius: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={seleccionados.has(p)}
+              onChange={(e) => setSeleccionados(prev => {
+                const next = new Set(prev);
+                if (e.target.checked) next.add(p); else next.delete(p);
+                return next;
+              })}
+            />
+            <span style={{ flex: 1, fontSize: 13, textTransform: 'capitalize' }}>{fmtPeriodo(p)}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13 }}>S/ {Number(data.monto).toFixed(2)}</span>
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <Btn variant="ghost" disabled={descartarM.isPending} onClick={() => descartarM.mutate()}>No cobrar ninguno</Btn>
+        <Btn disabled={cobrarM.isPending || seleccionados.size === 0} onClick={() => cobrarM.mutate()}>
+          Cobrar {seleccionados.size} mes{seleccionados.size !== 1 ? 'es' : ''}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
 
 export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
   const navigate = useNavigate();
@@ -36,6 +96,7 @@ export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
   const abierto = Boolean(ordenId);
   const [tecnicoElegido, setTecnicoElegido] = useState('');
   const [instalacion, setInstalacion] = useState({ puntoRedId: '', equipoProductoId: '', equipoSerie: '', fechaInstalacion: new Date().toISOString().slice(0, 10) });
+  const [saltados, setSaltados] = useState(null);
 
   useEffect(() => {
     document.body.style.overflow = abierto ? 'hidden' : '';
@@ -51,26 +112,35 @@ export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
 
   const tecnicosQ = useQuery({ queryKey: ['tecnicos-select'], queryFn: () => tecnicosApi.listar().then(r => r.data), enabled: abierto });
   const esInstalacion = o?.tipoOrden?.startsWith('INSTALACION');
-  const requiereInstalacion = Boolean(esInstalacion && o?.estado === 'EN_PROCESO' && o?.contrato);
+  const requiereInstalacion = Boolean(esInstalacion && ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO'].includes(o?.estado) && o?.contrato);
 
   const puntosQ = useQuery({ queryKey: ['puntos-red-mapa'], queryFn: () => puntosRedApi.listar().then(r => r.data), enabled: abierto && requiereInstalacion });
   const catalogoQ = useQuery({ queryKey: ['productos-catalogo-completo'], queryFn: () => productosApi.catalogo({ limit: 1000 }).then(r => r.data.data), enabled: abierto && requiereInstalacion });
 
   const cambiarEstadoM = useMutation({
     mutationFn: ({ estado, tecnicoId, ...resto }) => ordenesApi.cambiarEstado(ordenId, { estado, tecnicoId, ...resto }),
-    onSuccess: () => {
+    onSuccess: async (_res, variables) => {
       toast.success('Estado actualizado');
       qc.invalidateQueries({ queryKey: ['ordenes-servicio'] });
       qc.invalidateQueries({ queryKey: ['orden', ordenId] });
       qc.invalidateQueries({ queryKey: ['contratos'] });
       setTecnicoElegido('');
+
+      if (variables.estado === 'COMPLETADA' && o?.tipoOrden?.startsWith('RECONEXION') && o?.contratoId) {
+        try {
+          const { data } = await cargosApi.mesesSaltados(o.contratoId);
+          if (data?.periodos?.length) setSaltados({ contratoId: o.contratoId, periodos: data.periodos, monto: data.monto });
+        } catch { /* silencioso: no bloquea el flujo si falla el chequeo */ }
+      }
     },
     onError: (e) => toast.error(e.response?.data?.error || 'No se pudo cambiar el estado'),
   });
 
   const completarConInstalacion = () => {
-    if (requiereInstalacion && (!instalacion.puntoRedId || !instalacion.equipoProductoId)) {
-      toast.error('Selecciona el punto de red y el equipo instalado');
+    // El equipo (ONU/decodificador) es opcional — no toda instalación deja un
+    // equipo físico (ej. cable directo). Solo se pide el punto de red.
+    if (requiereInstalacion && !instalacion.puntoRedId) {
+      toast.error('Selecciona el punto de red');
       return;
     }
     cambiarEstadoM.mutate({ estado: 'COMPLETADA', ...(requiereInstalacion ? instalacion : {}) });
@@ -195,7 +265,7 @@ export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
                       Iniciar trabajo
                     </Btn>
                   )}
-                  {o.estado === 'EN_PROCESO' && (
+                  {['PENDIENTE', 'ASIGNADA', 'EN_PROCESO'].includes(o.estado) && (
                     <>
                       {requiereInstalacion && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px', background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 8 }}>
@@ -217,7 +287,7 @@ export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
                       </Btn>
                     </>
                   )}
-                  {(o.estado === 'PENDIENTE' || o.estado === 'ASIGNADA') && (
+                  {['PENDIENTE', 'ASIGNADA', 'EN_PROCESO'].includes(o.estado) && (
                     <Btn size="sm" variant="danger" icon={<XCircle size={13} />} disabled={cambiarEstadoM.isPending}
                       onClick={() => { if (confirm('¿Cancelar esta orden?')) cambiarEstadoM.mutate({ estado: 'CANCELADA' }); }}>
                       Cancelar orden
@@ -231,6 +301,11 @@ export default function OrdenDrawer({ ordenId, onCerrar, onEditar }) {
           </>
         ) : null}
       </aside>
+      <ModalMesesSaltados
+        data={saltados}
+        onClose={() => setSaltados(null)}
+        onResuelto={() => { setSaltados(null); qc.invalidateQueries({ queryKey: ['contratos'] }); }}
+      />
     </>,
     document.body
   );

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PiggyBank, ChevronDown, FileSpreadsheet, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { PiggyBank, ChevronDown, FileSpreadsheet, X, PackageX } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, LabelList,
@@ -27,6 +28,8 @@ const dashApi = {
   kpis:     ()        => api.get('/dashboard/kpis').then(r => r.data.data),
   analitica:(periodo) => api.get(`/dashboard/analitica?periodo=${periodo}`).then(r => r.data.data),
   historial:()        => api.get('/dashboard/historial').then(r => r.data.data),
+  servicios:()        => api.get('/dashboard/servicios').then(r => r.data.data),
+  inventarioStats: () => api.get('/inventario/stats').then(r => r.data),
 };
 
 const fmt = (n) =>
@@ -298,6 +301,125 @@ function GraficaMorosos() {
   );
 }
 
+// ─── Gráficas de tipo de servicio y planes ────────────────────────
+const COLOR_TIPO_SERVICIO = { INTERNET: '#2563EB', CABLE: '#7C3AED', DUO: '#0891B2' };
+
+function barShapeRedondeado(color) {
+  return (props) => {
+    const { x, y, width, height } = props;
+    const r = Math.min(6, width / 2, height || 0);
+    const h = Math.max(height, 0);
+    const path = h <= r
+      ? `M${x},${y + h} L${x},${y} L${x + width},${y} L${x + width},${y + h} Z`
+      : `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} L${x + width},${y + h} Z`;
+    return <path d={path} fill={color} />;
+  };
+}
+
+function AlertaStockBajo() {
+  const navigate = useNavigate();
+  const { data } = useQuery({ queryKey: ['dashboard-inventario-stats'], queryFn: dashApi.inventarioStats, refetchInterval: 60000 });
+  const stockBajo = data?.stockBajo || [];
+
+  if (stockBajo.length === 0) return null;
+
+  return (
+    <div style={{ background: '#FFFBEB', borderRadius: 16, border: '1px solid #FDE68A', padding: '14px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <PackageX size={17} color="#B45309" />
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#92400E', margin: 0 }}>
+            {stockBajo.length} producto(s) con stock bajo
+          </h3>
+        </div>
+        <Btn size="sm" variant="ghost" onClick={() => navigate('/almacen/inventario')}>Ver inventario</Btn>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {stockBajo.slice(0, 8).map(p => (
+          <span key={p.codigo || p.nombre} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 20, background: '#fff', border: '1px solid #FDE68A', fontSize: 12 }}>
+            <span style={{ fontWeight: 600, color: '#92400E' }}>{p.nombre}</span>
+            <span style={{ color: '#B45309', fontFamily: 'monospace' }}>{p.stock}/{p.minimo}</span>
+          </span>
+        ))}
+        {stockBajo.length > 8 && <span style={{ fontSize: 12, color: '#92400E', alignSelf: 'center' }}>+{stockBajo.length - 8} más</span>}
+      </div>
+    </div>
+  );
+}
+
+function GraficaServicios() {
+  const { data } = useQuery({ queryKey: ['dashboard-servicios'], queryFn: dashApi.servicios, refetchInterval: 60000 });
+  const porTipo = data?.porTipo || [];
+  const porPlan = (data?.porPlan || []).slice(0, 8);
+  const maxPlan = Math.max(1, ...porPlan.map(p => p.cantidad));
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }} className="resp-grid-2">
+      <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #F1F5F9', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', padding: '16px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0D1B2A', margin: 0 }}>Tipos de servicio</h3>
+          <span style={{ fontSize: 11, color: '#94A3B8' }}>{data?.total ?? 0} contrato(s) activo(s)</span>
+        </div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={porTipo} margin={{ top: 18, right: 10, left: 0, bottom: 5 }} barCategoryGap="30%">
+            <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B', fontWeight: 600 }} axisLine={false} tickLine={false} />
+            <YAxis hide allowDecimals={false} />
+            <Tooltip
+              cursor={{ fill: 'rgba(0,0,0,0.03)' }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const d = payload[0].payload;
+                return (
+                  <div style={{ background: '#1E293B', borderRadius: 10, padding: '8px 14px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+                    <p style={{ fontSize: 11, color: '#94A3B8', margin: '0 0 4px' }}>{d.label}</p>
+                    <p style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0 }}>{d.cantidad} contrato(s)</p>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="cantidad" maxBarSize={70} isAnimationActive={false}
+              shape={(props) => barShapeRedondeado(COLOR_TIPO_SERVICIO[props.payload.tipo])(props)}>
+              <LabelList dataKey="cantidad" position="top" style={{ fontSize: 13, fontWeight: 800, fill: '#0D1B2A' }} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 4 }}>
+          {porTipo.map(t => (
+            <div key={t.tipo} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: COLOR_TIPO_SERVICIO[t.tipo] }} />
+              <span style={{ fontSize: 11, color: '#64748B' }}>{t.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #F1F5F9', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', padding: '16px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0D1B2A', margin: 0 }}>Contratos por plan</h3>
+        </div>
+        {porPlan.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#94A3B8' }}>Sin contratos activos con plan asignado.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {porPlan.map(p => (
+              <div key={p.plan}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                  <span style={{ color: '#1E293B', fontWeight: 600 }}>{p.plan}</span>
+                  <span style={{ color: '#64748B', fontFamily: 'var(--font-mono, monospace)' }}>{p.cantidad}</span>
+                </div>
+                <div style={{ height: 8, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(p.cantidad / maxPlan) * 100}%`, background: '#2563EB', borderRadius: 4 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────
 export default function Dashboard() {
   const [periodo, setPeriodo] = useState('7d');
@@ -312,6 +434,9 @@ export default function Dashboard() {
     <>
     <style>{CSS}</style>
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── Alerta de stock bajo ── */}
+      <AlertaStockBajo />
 
       {/* ── KPI Cards ── */}
       <div className="dash-grid-kpis">
@@ -370,6 +495,9 @@ export default function Dashboard() {
           </AreaChart>
         </ResponsiveContainer>
       </div>
+
+      {/* ── Tipos de servicio y planes ── */}
+      <GraficaServicios />
 
       {/* ── Gráfico de morosos ── */}
       <GraficaMorosos />

@@ -3,10 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   DollarSign, Search, X, RefreshCw, CheckCircle2, MessageCircle, Download, AlertTriangle,
-  FileSpreadsheet, TrendingDown, Plus, Wallet, Users, ClipboardList, PlusCircle,
+  FileSpreadsheet, TrendingDown, Plus, Wallet, Users, ClipboardList, PlusCircle, Percent,
 } from 'lucide-react';
 import { contratosApi, cargosApi, pagosApi, empresaApi, egresosApi } from '../services/api';
 import { Btn, Badge, Table, Tr, Td, Modal } from '../components/ui';
+import { useAuthStore } from '../store/auth.store';
 import { formatMetodosPagoTexto } from '../utils/metodosPago';
 
 const METODOS = {
@@ -461,6 +462,7 @@ const emptyCargoManual = { periodo: new Date().toISOString().slice(0, 7), monto:
 // ─────────────────────────────────────────────────────────────────
 function TabRegistrarCobro({ contrato, setContrato }) {
   const qc = useQueryClient();
+  const puedeDescuento = useAuthStore(s => s.usuario?.rol === 'ADMIN' || s.usuario?.rol === 'SUPERVISOR');
   const [seleccionados, setSeleccionados] = useState(new Set());
   const [montoPagar, setMontoPagar] = useState('');
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
@@ -468,6 +470,8 @@ function TabRegistrarCobro({ contrato, setContrato }) {
   const [observacion, setObservacion] = useState('');
   const [mostrarCargoManual, setMostrarCargoManual] = useState(false);
   const [cargoManual, setCargoManual] = useState(emptyCargoManual);
+  const [descuentoCargoId, setDescuentoCargoId] = useState(null);
+  const [descuentoPct, setDescuentoPct] = useState('');
 
   const cargosQ = useQuery({
     queryKey: ['cargos-contrato', contrato?.id],
@@ -504,6 +508,30 @@ function TabRegistrarCobro({ contrato, setContrato }) {
       qc.invalidateQueries({ queryKey: ['pagos-reporte'] });
     },
     onError: (e) => toast.error(e.response?.data?.error || 'No se pudo registrar el pago'),
+  });
+
+  const aplicarDescuentoM = useMutation({
+    mutationFn: () => cargosApi.aplicarDescuento(descuentoCargoId, Number(descuentoPct)),
+    onSuccess: () => {
+      toast.success('Descuento aplicado');
+      setDescuentoCargoId(null);
+      setDescuentoPct('');
+      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo aplicar el descuento'),
+  });
+
+  const quitarDescuentoM = useMutation({
+    mutationFn: (cargoId) => cargosApi.quitarDescuento(cargoId),
+    onSuccess: () => {
+      toast.success('Descuento quitado');
+      setDescuentoCargoId(null);
+      setDescuentoPct('');
+      qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo quitar el descuento'),
   });
 
   const crearCargoManualM = useMutation({
@@ -593,23 +621,63 @@ function TabRegistrarCobro({ contrato, setContrato }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {cargos.map(c => {
                     const esParcial = c.estado === 'PARCIAL';
+                    const descontando = descuentoCargoId === c.id;
+                    const tieneDescuento = c.montoOriginal != null;
+                    const pctActual = tieneDescuento ? Math.round((1 - Number(c.monto) / Number(c.montoOriginal)) * 100) : null;
                     return (
-                      <label key={c.id} style={{
-                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                        border: `1.5px solid ${seleccionados.has(c.id) ? '#2563EB' : '#C9DAEA'}`,
-                        background: seleccionados.has(c.id) ? '#EFF6FF' : '#F8FAFC',
-                      }}>
-                        <input type="checkbox" checked={seleccionados.has(c.id)} onChange={() => toggleCargo(c.id)} />
-                        <div style={{ flex: 1 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{fmtPeriodo(c.periodo)}</span>
-                          {esParcial && (
-                            <div style={{ fontSize: 11, color: '#B45309' }}>Abonado S/ {(Number(c.monto) - Number(c.saldo)).toFixed(2)} de S/ {Number(c.monto).toFixed(2)}</div>
+                      <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <label style={{
+                          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                          border: `1.5px solid ${seleccionados.has(c.id) ? '#2563EB' : '#C9DAEA'}`,
+                          background: seleccionados.has(c.id) ? '#EFF6FF' : '#F8FAFC',
+                        }}>
+                          <input type="checkbox" checked={seleccionados.has(c.id)} onChange={() => toggleCargo(c.id)} />
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{fmtPeriodo(c.periodo)}</span>
+                            {esParcial && (
+                              <div style={{ fontSize: 11, color: '#B45309' }}>Abonado S/ {(Number(c.monto) - Number(c.saldo)).toFixed(2)} de S/ {Number(c.monto).toFixed(2)}</div>
+                            )}
+                            {tieneDescuento && (
+                              <div style={{ fontSize: 11, color: '#15803D' }}>
+                                {c.nota} · antes S/ {Number(c.montoOriginal).toFixed(2)}
+                              </div>
+                            )}
+                          </div>
+                          {c.vencido && <Badge color="red">Vencido</Badge>}
+                          {esParcial && <Badge color="yellow">Parcial</Badge>}
+                          {tieneDescuento && !esParcial && <Badge color="green">-{pctActual}%</Badge>}
+                          <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#1E3A5F' }}>S/ {Number(c.saldo).toFixed(2)}</span>
+                          {c.estado === 'PENDIENTE' && puedeDescuento && (
+                            <button type="button" title={tieneDescuento ? 'Cambiar el descuento' : 'Aplicar descuento a este mes'}
+                              onClick={(e) => {
+                                e.preventDefault(); e.stopPropagation();
+                                setDescuentoCargoId(descontando ? null : c.id);
+                                setDescuentoPct(descontando ? '' : (tieneDescuento ? String(pctActual) : ''));
+                              }}
+                              style={{ background: 'transparent', border: '1px solid #C9DAEA', borderRadius: 6, padding: '4px 8px', fontSize: 11, fontWeight: 700, color: '#2563EB', cursor: 'pointer' }}>
+                              {tieneDescuento ? 'Cambiar %' : '% Descuento'}
+                            </button>
                           )}
-                        </div>
-                        {c.vencido && <Badge color="red">Vencido</Badge>}
-                        {esParcial && <Badge color="yellow">Parcial</Badge>}
-                        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#1E3A5F' }}>S/ {Number(c.saldo).toFixed(2)}</span>
-                      </label>
+                        </label>
+                        {descontando && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 12, color: '#92400E' }}>
+                              Descuento % para {fmtPeriodo(c.periodo)} (S/ {Number(tieneDescuento ? c.montoOriginal : c.monto).toFixed(2)} sin descuento):
+                            </span>
+                            <input type="number" min={1} max={100} step={1} value={descuentoPct} onChange={e => setDescuentoPct(e.target.value)}
+                              style={{ width: 70, height: 30, textAlign: 'center', border: '1px solid #FDE68A', borderRadius: 6 }} />
+                            <Btn size="sm" disabled={!(Number(descuentoPct) > 0) || aplicarDescuentoM.isPending} onClick={() => aplicarDescuentoM.mutate()}>
+                              {tieneDescuento ? 'Actualizar' : 'Aplicar'}
+                            </Btn>
+                            {tieneDescuento && (
+                              <Btn size="sm" variant="danger" disabled={quitarDescuentoM.isPending} onClick={() => quitarDescuentoM.mutate(c.id)}>
+                                Quitar descuento
+                              </Btn>
+                            )}
+                            <Btn size="sm" variant="ghost" onClick={() => setDescuentoCargoId(null)}>Cancelar</Btn>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -938,11 +1006,93 @@ function ModalGenerarCargos({ open, onClose, onGenerado }) {
   );
 }
 
+function ModalDescuentoMasivo({ open, onClose, onAplicado }) {
+  const mesActual = new Date().toISOString().slice(0, 7);
+  const [periodo, setPeriodo] = useState(mesActual);
+  const [porcentaje, setPorcentaje] = useState('');
+  const [motivo, setMotivo] = useState('');
+
+  useEffect(() => {
+    if (open) { setPeriodo(mesActual); setPorcentaje(''); setMotivo(''); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const previewQ = useQuery({
+    queryKey: ['descuento-masivo-preview', periodo],
+    queryFn: () => cargosApi.descuentoMasivoPreview(periodo).then(r => r.data),
+    enabled: open && /^\d{4}-\d{2}$/.test(periodo),
+  });
+
+  const aplicarM = useMutation({
+    mutationFn: () => cargosApi.descuentoMasivo({ periodo, porcentaje: Number(porcentaje), motivo }),
+    onSuccess: (res) => {
+      toast.success(`Descuento aplicado a ${res.data.actualizados} cargo(s)`);
+      onAplicado();
+      onClose();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo aplicar el descuento masivo'),
+  });
+
+  const quitarM = useMutation({
+    mutationFn: () => cargosApi.quitarDescuentoMasivo(periodo),
+    onSuccess: (res) => {
+      toast.success(`Descuento quitado de ${res.data.revertidos} cargo(s)`);
+      onAplicado();
+      previewQ.refetch();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo quitar el descuento masivo'),
+  });
+
+  const cantidad = previewQ.data?.cantidad ?? 0;
+  const cantidadConDescuento = previewQ.data?.cantidadConDescuento ?? 0;
+  const valido = /^\d{4}-\d{2}$/.test(periodo) && Number(porcentaje) > 0 && Number(porcentaje) <= 100;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Descuento masivo" subtitle="Aplica un % de descuento a todos los cargos pendientes de un mes (ej. Fiestas Patrias)" width={460}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <Campo label="Mes a descontar" required>
+          <input type="month" style={campoInputStyle} value={periodo} onChange={e => setPeriodo(e.target.value)} />
+        </Campo>
+        <Campo label="Porcentaje de descuento" required>
+          <input type="number" min={1} max={100} step={1} style={campoInputStyle} value={porcentaje} onChange={e => setPorcentaje(e.target.value)} placeholder="10" />
+        </Campo>
+        <Campo label="Motivo (opcional, se guarda como nota)">
+          <input style={campoInputStyle} value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Ej. Descuento Fiestas Patrias" />
+        </Campo>
+
+        <div style={{ padding: '10px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8, fontSize: 12.5, color: '#1E3A5F' }}>
+          {previewQ.isLoading ? 'Calculando...' : `Esto afectará a ${cantidad} cargo(s) pendiente(s) de ${periodo}. Los cargos ya pagados, parciales o de otros meses no se tocan.`}
+        </div>
+
+        {cantidadConDescuento > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8 }}>
+            <span style={{ fontSize: 12.5, color: '#991B1B' }}>
+              {cantidadConDescuento} cargo(s) de {periodo} ya tienen un descuento activo.
+            </span>
+            <Btn size="sm" variant="danger" disabled={quitarM.isPending} onClick={() => quitarM.mutate()}>
+              Quitar descuento del mes
+            </Btn>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn disabled={!valido || cantidad === 0 || aplicarM.isPending} onClick={() => aplicarM.mutate()}>
+            Aplicar a {cantidad} cargo(s)
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Pagos() {
   const qc = useQueryClient();
+  const puedeDescuentoMasivo = useAuthStore(s => s.usuario?.rol === 'ADMIN' || s.usuario?.rol === 'SUPERVISOR');
   const [tab, setTab] = useState('deudores');
   const [contrato, setContrato] = useState(null);
   const [modalCargosAbierto, setModalCargosAbierto] = useState(false);
+  const [modalDescuentoMasivoAbierto, setModalDescuentoMasivoAbierto] = useState(false);
 
   const empresaQ = useQuery({ queryKey: ['empresa'], queryFn: () => empresaApi.obtener().then(r => r.data) });
   const metodosPago = empresaQ.data?.metodosPago || [];
@@ -959,9 +1109,16 @@ export default function Pagos() {
             <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--txt-3)' }}>Registro de cobros mensuales</p>
           </div>
         </div>
-        <Btn variant="ghost" icon={<RefreshCw size={14} />} onClick={() => setModalCargosAbierto(true)}>
-          Generar cargos del mes
-        </Btn>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {puedeDescuentoMasivo && (
+            <Btn variant="ghost" icon={<Percent size={14} />} onClick={() => setModalDescuentoMasivoAbierto(true)}>
+              Descuento masivo
+            </Btn>
+          )}
+          <Btn variant="ghost" icon={<RefreshCw size={14} />} onClick={() => setModalCargosAbierto(true)}>
+            Generar cargos del mes
+          </Btn>
+        </div>
       </div>
 
       <ModalGenerarCargos
@@ -971,6 +1128,15 @@ export default function Pagos() {
           qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
           qc.invalidateQueries({ queryKey: ['contratos'] });
           qc.invalidateQueries({ queryKey: ['cargos-preview'] });
+        }}
+      />
+
+      <ModalDescuentoMasivo
+        open={modalDescuentoMasivoAbierto}
+        onClose={() => setModalDescuentoMasivoAbierto(false)}
+        onAplicado={() => {
+          qc.invalidateQueries({ queryKey: ['cargos-contrato'] });
+          qc.invalidateQueries({ queryKey: ['contratos'] });
         }}
       />
 

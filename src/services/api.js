@@ -97,7 +97,9 @@ export const contratosApi = {
   obtener:    (id) => api.get(`/contratos/${id}`),
   crear:      (payload) => api.post('/contratos', payload),
   actualizar: (id, payload) => api.put(`/contratos/${id}`, payload),
+  eliminar:   (id) => api.delete(`/contratos/${id}`),
   importar:   (filas) => api.post('/contratos/importar', { filas }),
+  siguienteNumero: () => api.get('/contratos/siguiente-numero'),
 };
 
 export const ordenesApi = {
@@ -110,10 +112,18 @@ export const ordenesApi = {
 };
 
 export const cargosApi = {
-  porContrato: (contratoId) => api.get(`/cargos/contrato/${contratoId}`),
-  preview:     () => api.get('/cargos/preview'),
-  generar:     (payload) => api.post('/cargos/generar', payload),
-  crearManual: (payload) => api.post('/cargos', payload),
+  porContrato:      (contratoId) => api.get(`/cargos/contrato/${contratoId}`),
+  preview:          () => api.get('/cargos/preview'),
+  generar:          (payload) => api.post('/cargos/generar', payload),
+  crearManual:      (payload) => api.post('/cargos', payload),
+  aplicarDescuento: (cargoId, porcentaje) => api.patch(`/cargos/${cargoId}/descuento`, { porcentaje }),
+  quitarDescuento:  (cargoId) => api.delete(`/cargos/${cargoId}/descuento`),
+  descuentoMasivoPreview: (periodo) => api.get('/cargos/descuento-masivo/preview', { params: { periodo } }),
+  descuentoMasivo:  (payload) => api.post('/cargos/descuento-masivo', payload),
+  quitarDescuentoMasivo: (periodo) => api.post('/cargos/quitar-descuento-masivo', { periodo }),
+  mesesSaltados:    (contratoId) => api.get(`/cargos/meses-saltados/${contratoId}`),
+  generarSaltados:  (payload) => api.post('/cargos/generar-saltados', payload),
+  descartarSaltados:(contratoId) => api.post(`/cargos/descartar-saltados/${contratoId}`),
 };
 
 export const pagosApi = {

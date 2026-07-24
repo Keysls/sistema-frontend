@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { FileText, Plus, Pencil, Search, X, Upload, Download, FileSpreadsheet } from 'lucide-react';
+import { FileText, Plus, Pencil, Search, X, Upload, Download, FileSpreadsheet, Trash2 } from 'lucide-react';
 import { clientesApi, contratosApi, planesApi, puntosRedApi, productosApi, tecnicosApi } from '../services/api';
 import { Btn, Badge, Modal, Table, Tr, Td } from '../components/ui';
 import ContratoDrawer from '../components/ContratoDrawer';
 import { tipoLabel } from '../utils/tiposOrden';
+import { useAuthStore } from '../store/auth.store';
 
 function fmtFecha(f) {
   if (!f) return '—';
@@ -17,12 +18,14 @@ function fmtFecha(f) {
 const COLUMNAS_PLANTILLA = [
   'Contrato', 'Doc Identidad', 'Abonado', 'Direccion', 'Referencia', 'Sector',
   'Tipo de servicio', 'nombre del plan', 'dia de corte', 'telefono', 'Cintillo', 'Punto de red',
+  'IP WAN', 'Mascara', 'Gateway', 'Usuario PPPoE', 'Contraseña PPPoE',
 ];
+const ANCHOS_PLANTILLA = [14, 14, 28, 24, 20, 14, 16, 20, 12, 14, 14, 14, 16, 16, 16, 20, 20];
 
 function descargarPlantilla() {
   import('xlsx').then(XLSX => {
     const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_PLANTILLA]);
-    ws['!cols'] = [14, 14, 28, 24, 20, 14, 16, 20, 12, 14, 14, 14].map(w => ({ wch: w }));
+    ws['!cols'] = ANCHOS_PLANTILLA.map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
     XLSX.writeFile(wb, 'plantilla_contratos.xlsx');
@@ -31,6 +34,7 @@ function descargarPlantilla() {
 
 function exportarContratosExcel(contratos) {
   import('xlsx').then(XLSX => {
+    const encabezados = [...COLUMNAS_PLANTILLA, 'Meses pendientes', 'Deuda (S/)'];
     const rows = contratos.map(c => ([
       c.numero,
       c.cliente?.dniRuc?.startsWith('SINDOC-') ? '' : (c.cliente?.dniRuc || ''),
@@ -44,9 +48,16 @@ function exportarContratosExcel(contratos) {
       c.cliente?.telefono || '',
       c.precinto || '',
       c.puntoRed?.codigo || '',
+      c.ipWan || '',
+      c.mascara || '',
+      c.gateway || '',
+      c.pppoeUsuario || '',
+      c.pppoePassword || '',
+      c.mesesPendientes || 0,
+      Number(c.deudaPendiente || 0),
     ]));
-    const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_PLANTILLA, ...rows]);
-    ws['!cols'] = [14, 14, 28, 24, 20, 14, 16, 20, 12, 14, 14, 14].map(w => ({ wch: w }));
+    const ws = XLSX.utils.aoa_to_sheet([encabezados, ...rows]);
+    ws['!cols'] = [...ANCHOS_PLANTILLA, 16, 14].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
     XLSX.writeFile(wb, `contratos_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -69,6 +80,13 @@ const CLAVE_POR_ENCABEZADO = {
   'teléfono': 'telefono',
   'cintillo': 'cintillo',
   'punto de red': 'puntoRed',
+  'ip wan': 'ipWan',
+  'mascara': 'mascara',
+  'máscara': 'mascara',
+  'gateway': 'gateway',
+  'usuario pppoe': 'pppoeUsuario',
+  'contraseña pppoe': 'pppoePassword',
+  'contrasena pppoe': 'pppoePassword',
 };
 
 function parsearExcelContratos(file) {
@@ -130,7 +148,7 @@ function SeccionLabel({ children }) {
 const emptyForm = {
   id: null, clienteId: '', clienteLabel: '', clienteData: null, clienteCelular: '',
   direccion: '', referencia: '', sector: '',
-  tipoServicio: 'INTERNET', ipWan: '', mascara: '', gateway: '',
+  tipoServicio: 'INTERNET', ipWan: '', mascara: '', gateway: '', pppoeUsuario: '', pppoePassword: '',
   latitud: '', longitud: '', precinto: '',
   planId: '', mbps: '', costoMensual: '', diaCorte: '',
   puntoRedId: '', equipoProductoId: '', equipoSerie: '',
@@ -225,11 +243,13 @@ function BuscadorCliente({ value, label, onSelect }) {
 
 export default function Contratos() {
   const qc = useQueryClient();
+  const esAdmin = useAuthStore(s => s.usuario?.rol === 'ADMIN');
   const [modal, setModal] = useState(null);
   const [drawerId, setDrawerId] = useState(null);
   const [q, setQ] = useState('');
   const [estadoFiltro, setEstadoFiltro] = useState('');
   const [deudaFiltro, setDeudaFiltro] = useState('');
+  const [planFiltro, setPlanFiltro] = useState('');
   const [pagina, setPagina] = useState(1);
   const POR_PAGINA = 25;
   const [resultadoImport, setResultadoImport] = useState(null);
@@ -269,6 +289,21 @@ export default function Contratos() {
     onError: (e) => toast.error(e.response?.data?.error || 'No se pudo guardar el contrato'),
   });
 
+  const eliminarM = useMutation({
+    mutationFn: (id) => contratosApi.eliminar(id),
+    onSuccess: () => {
+      toast.success('Contrato eliminado');
+      qc.invalidateQueries({ queryKey: ['contratos'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'No se pudo eliminar el contrato'),
+  });
+
+  const eliminarContrato = (c) => {
+    if (confirm(`¿Eliminar el contrato ${c.numero}? Esto borra también sus cargos, pagos vinculados y órdenes de servicio. Esta acción no se puede deshacer.`)) {
+      eliminarM.mutate(c.id);
+    }
+  };
+
   const importarM = useMutation({
     mutationFn: (filas) => contratosApi.importar(filas).then(r => r.data),
     onSuccess: (data) => {
@@ -297,23 +332,32 @@ export default function Contratos() {
   const contratos = contratosQ.data || [];
 
   const contratosFiltrados = useMemo(() => {
-    if (deudaFiltro === 'aldia') return contratos.filter(c => !(c.deudaPendiente > 0));
-    if (deudaFiltro === 'condeuda') return contratos.filter(c => c.deudaPendiente > 0);
-    return contratos;
-  }, [contratos, deudaFiltro]);
+    let lista = contratos;
+    if (deudaFiltro === 'aldia') lista = lista.filter(c => !(c.deudaPendiente > 0));
+    else if (deudaFiltro === 'condeuda') lista = lista.filter(c => c.deudaPendiente > 0);
+    else if (deudaFiltro === 'deuda1') lista = lista.filter(c => c.deudaPendiente > 0 && c.mesesPendientes === 1);
+    else if (deudaFiltro === 'deuda2') lista = lista.filter(c => c.deudaPendiente > 0 && c.mesesPendientes === 2);
+    else if (deudaFiltro === 'deuda3mas') lista = lista.filter(c => c.deudaPendiente > 0 && c.mesesPendientes >= 3);
+
+    if (planFiltro === 'sinplan') lista = lista.filter(c => !c.planId);
+    else if (planFiltro) lista = lista.filter(c => c.planId === planFiltro);
+
+    return lista;
+  }, [contratos, deudaFiltro, planFiltro]);
 
   const totalPaginas = Math.max(1, Math.ceil(contratosFiltrados.length / POR_PAGINA));
   const paginaSegura = Math.min(pagina, totalPaginas);
   const contratosPagina = contratosFiltrados.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
 
-  useEffect(() => { setPagina(1); }, [q, estadoFiltro, deudaFiltro]);
+  useEffect(() => { setPagina(1); }, [q, estadoFiltro, deudaFiltro, planFiltro]);
 
   const abrirNuevo = () => setModal(emptyForm);
   const abrirEditar = (c) => setModal({
-    id: c.id, clienteId: c.clienteId, clienteLabel: `${c.cliente?.nombres} ${c.cliente?.apellidos || ''} — ${c.cliente?.dniRuc}`,
+    id: c.id, numero: c.numero, clienteId: c.clienteId, clienteLabel: `${c.cliente?.nombres} ${c.cliente?.apellidos || ''} — ${c.cliente?.dniRuc}`,
     clienteData: c.cliente || null, clienteCelular: c.cliente?.telefono || '',
     direccion: c.direccion, referencia: c.referencia || '', sector: c.sector || '',
     tipoServicio: c.tipoServicio, ipWan: c.ipWan || '', mascara: c.mascara || '', gateway: c.gateway || '',
+    pppoeUsuario: c.pppoeUsuario || '', pppoePassword: c.pppoePassword || '',
     latitud: c.latitud ?? '', longitud: c.longitud ?? '', precinto: c.precinto || '',
     planId: c.planId || '', mbps: c.mbps ?? '', costoMensual: c.costoMensual ?? '', diaCorte: c.diaCorte ?? '',
     puntoRedId: c.puntoRedId || '', equipoProductoId: c.equipoProductoId ?? '', equipoSerie: c.equipoSerie || '',
@@ -335,7 +379,8 @@ export default function Contratos() {
 
   const requiereIp = modal?.tipoServicio === 'INTERNET' || modal?.tipoServicio === 'DUO';
   const requiereBaja = modal?.estado === 'BAJA' || modal?.estado === 'CORTADO';
-  const formValido = modal?.clienteId && modal?.direccion?.trim() && modal?.tipoServicio;
+  const diaCorteValido = Number.isInteger(Number(modal?.diaCorte)) && Number(modal?.diaCorte) >= 1 && Number(modal?.diaCorte) <= 31;
+  const formValido = modal?.clienteId && modal?.direccion?.trim() && modal?.tipoServicio && diaCorteValido;
 
   const seleccionarPlan = (planId) => {
     const plan = (planesQ.data || []).find(p => p.id === planId);
@@ -381,6 +426,15 @@ export default function Contratos() {
           <option value="">Todos (deuda)</option>
           <option value="aldia">Al día</option>
           <option value="condeuda">Con deuda</option>
+          <option value="deuda1">Debe 1 mes</option>
+          <option value="deuda2">Debe 2 meses</option>
+          <option value="deuda3mas">Debe 3+ meses</option>
+        </select>
+        <select value={planFiltro} onChange={e => setPlanFiltro(e.target.value)}
+          style={{ height: 36, padding: '0 12px', background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 6, color: 'var(--txt)', fontSize: 13, minWidth: 160 }}>
+          <option value="">Todos los planes</option>
+          <option value="sinplan">Sin plan</option>
+          {(planesQ.data || []).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
         </select>
       </div>
 
@@ -424,7 +478,12 @@ export default function Contratos() {
                 {c.ultimoTipoOrden && <div style={{ fontSize: 10, marginTop: 1 }}>{tipoLabel(c.ultimoTipoOrden)}</div>}
               </Td>
               <Td>
-                <Btn variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={(e) => { e.stopPropagation(); abrirEditar(c); }} />
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <Btn variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={(e) => { e.stopPropagation(); abrirEditar(c); }} />
+                  {esAdmin && (
+                    <Btn variant="ghost" size="sm" icon={<Trash2 size={13} color="#DC2626" />} onClick={(e) => { e.stopPropagation(); eliminarContrato(c); }} />
+                  )}
+                </div>
               </Td>
             </Tr>
           ))}
@@ -459,7 +518,12 @@ export default function Contratos() {
                 ) : <span style={{ color: '#16A34A', fontWeight: 600 }}>Al día</span>}
                 <span>{fmtFecha(c.ultimaActividad)}</span>
               </div>
-              <Btn variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={(e) => { e.stopPropagation(); abrirEditar(c); }} style={{ alignSelf: 'flex-end' }}>Editar</Btn>
+              <div style={{ display: 'flex', gap: 6, alignSelf: 'flex-end' }}>
+                <Btn variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={(e) => { e.stopPropagation(); abrirEditar(c); }}>Editar</Btn>
+                {esAdmin && (
+                  <Btn variant="ghost" size="sm" icon={<Trash2 size={13} color="#DC2626" />} onClick={(e) => { e.stopPropagation(); eliminarContrato(c); }}>Eliminar</Btn>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -546,7 +610,7 @@ export default function Contratos() {
                 <Campo label="Costo mensual (S/)">
                   <input type="number" step="0.01" style={campoInputStyle} value={modal.costoMensual} onChange={e => setModal({ ...modal, costoMensual: e.target.value })} />
                 </Campo>
-                <Campo label="Día de corte">
+                <Campo label="Día de corte" required>
                   <input type="number" min="1" max="31" style={campoInputStyle} value={modal.diaCorte} onChange={e => setModal({ ...modal, diaCorte: e.target.value })} placeholder="15" />
                 </Campo>
               </div>
@@ -561,6 +625,41 @@ export default function Contratos() {
                   </Campo>
                   <Campo label="Gateway">
                     <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.gateway} onChange={e => setModal({ ...modal, gateway: e.target.value })} placeholder="192.168.1.1" />
+                  </Campo>
+                </div>
+              )}
+
+              {requiereIp && (
+                <div className="resp-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Campo label="Usuario PPPoE">
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.pppoeUsuario} onChange={e => setModal({ ...modal, pppoeUsuario: e.target.value })} placeholder="Manual o generado" />
+                      <Btn type="button" variant="ghost" size="sm" onClick={async () => {
+                        const zona = (modal.sector || '').trim().replace(/\s+/g, '').toUpperCase();
+                        // Si el contrato ya existe usa su número real; si es nuevo, le pide al
+                        // backend el correlativo que le va a tocar (el mismo que se le asignará al guardar).
+                        let base = modal.numero;
+                        if (!base) {
+                          try {
+                            base = (await contratosApi.siguienteNumero()).data.numero;
+                          } catch {
+                            toast.error('No se pudo calcular el número de contrato');
+                            return;
+                          }
+                        }
+                        setModal(m => ({ ...m, pppoeUsuario: zona ? `${base}-${zona}` : base }));
+                      }}>Generar</Btn>
+                    </div>
+                  </Campo>
+                  <Campo label="Contraseña PPPoE">
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.pppoePassword} onChange={e => setModal({ ...modal, pppoePassword: e.target.value })} placeholder="Manual o generado (DNI)" />
+                      <Btn type="button" variant="ghost" size="sm" onClick={() => {
+                        const dni = modal.clienteData?.dniRuc;
+                        if (!dni || dni.startsWith('SINDOC-')) { toast.error('Este cliente no tiene DNI/RUC registrado — ingresa la contraseña manualmente'); return; }
+                        setModal(m => ({ ...m, pppoePassword: dni }));
+                      }}>Generar</Btn>
+                    </div>
                   </Campo>
                 </div>
               )}

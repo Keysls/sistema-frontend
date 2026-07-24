@@ -217,7 +217,7 @@ export default function ContratoDetalle() {
       </div>
 
       {/* Equipo actual */}
-      {(c.equipoProducto || c.equipoSerie || c.tecnicoInstalador || c.ipWan) && (
+      {(c.equipoProducto || c.equipoSerie || c.tecnicoInstalador || c.ipWan || c.pppoeUsuario) && (
         <Card style={{ marginBottom: 16 }}>
           <CardHeader icon={<Router size={15} />} title="Equipo e instalación" />
           <div style={{ padding: '14px 16px' }}>
@@ -237,6 +237,16 @@ export default function ContratoDetalle() {
                   <Field label="IP WAN" value={c.ipWan || '—'} mono onCopy={c.ipWan ? () => copiar(c.ipWan, 'IP copiada') : null} />
                   <Field label="Máscara" value={c.mascara || '—'} mono />
                   <Field label="Gateway" value={c.gateway || '—'} mono onCopy={c.gateway ? () => copiar(c.gateway, 'Gateway copiado') : null} />
+                </div>
+              </>
+            )}
+
+            {(c.pppoeUsuario || c.pppoePassword) && (
+              <>
+                <SubSeccion label="PPPoE" />
+                <div style={{ display: 'grid', gap: 10 }} className="cdet-grid">
+                  <Field label="Usuario" value={c.pppoeUsuario || '—'} mono onCopy={c.pppoeUsuario ? () => copiar(c.pppoeUsuario, 'Usuario copiado') : null} />
+                  <Field label="Contraseña" value={c.pppoePassword || '—'} mono onCopy={c.pppoePassword ? () => copiar(c.pppoePassword, 'Contraseña copiada') : null} />
                 </div>
               </>
             )}

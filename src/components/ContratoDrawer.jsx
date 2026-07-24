@@ -177,7 +177,10 @@ export default function ContratoDrawer({ contratoId, onCerrar, onEditar }) {
                   {c.tipoServicio !== 'CABLE' && (
                     <>
                       {c.ipWan && <FilaDato label="IP WAN" value={c.ipWan} mono onCopy={() => copiar(c.ipWan, 'IP copiada')} />}
+                      {c.mascara && <FilaDato label="Máscara" value={c.mascara} mono onCopy={() => copiar(c.mascara, 'Máscara copiada')} />}
                       {c.gateway && <FilaDato label="Gateway" value={c.gateway} mono onCopy={() => copiar(c.gateway, 'Gateway copiado')} />}
+                      {c.pppoeUsuario && <FilaDato label="Usuario PPPoE" value={c.pppoeUsuario} mono onCopy={() => copiar(c.pppoeUsuario, 'Usuario copiado')} />}
+                      {c.pppoePassword && <FilaDato label="Contraseña PPPoE" value={c.pppoePassword} mono onCopy={() => copiar(c.pppoePassword, 'Contraseña copiada')} />}
                     </>
                   )}
                   <FilaDato label="Registrado" value={fmtFecha(c.createdAt)} last />

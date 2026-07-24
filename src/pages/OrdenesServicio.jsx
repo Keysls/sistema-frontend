@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { ClipboardList, Plus, Pencil, Search, CheckCircle2, X } from 'lucide-react';
+import { ClipboardList, Plus, Pencil, Search, CheckCircle2, X, AlertTriangle } from 'lucide-react';
 import { contratosApi, ordenesApi, planesApi, tecnicosApi } from '../services/api';
 import { Btn, Badge, Modal, Table, Tr, Td } from '../components/ui';
 import { TIPOS_ORDEN, SERVICIO_LABEL } from '../utils/tiposOrden';
@@ -50,9 +50,15 @@ function SeccionLabel({ children }) {
 const hoy = () => new Date().toISOString().slice(0, 10);
 
 const emptyForm = {
-  id: null, contratoId: '', contratoLabel: '', contratoServicio: '', tipoOrden: 'INSTALACION_I',
+  id: null, contratoId: '', contratoLabel: '', contratoServicio: '', contratoEstado: '', tipoOrden: 'INSTALACION_I',
   fechaServicio: hoy(), abonado: '', dni: '', direccion: '', referencia: '', sector: '', celular: '',
-  observacion: '', tecnicoId: '', ipWan: '', mascara: '', gateway: '', mensualidad: '', mbps: '', planId: '',
+  observacion: '', tecnicoId: '', ipWan: '', mascara: '', gateway: '', pppoeUsuario: '', pppoePassword: '', mensualidad: '', mbps: '', planId: '',
+};
+
+const ESTADO_CONTRATO_INFO = {
+  SUSPENDIDO: { label: 'Suspendido', bg: '#FFFBEB', border: '#FDE68A', color: '#B45309' },
+  CORTADO: { label: 'Cortado', bg: '#FEF2F2', border: '#FECACA', color: '#DC2626' },
+  BAJA: { label: 'Dado de baja', bg: '#F1F5F9', border: '#E2E8F0', color: '#475569' },
 };
 
 function fmtFecha(f) {
@@ -148,8 +154,22 @@ export default function OrdenesServicio() {
   const planesQ = useQuery({ queryKey: ['planes'], queryFn: () => planesApi.listar({ soloActivos: 'true' }).then(r => r.data) });
 
   const tipoInfo = TIPOS_ORDEN[modal?.tipoOrden] || {};
-  const requiereIp = tipoInfo.sufijo === 'I' || tipoInfo.sufijo === 'D';
+  // El plan solo tiene sentido elegirlo al instalar, cambiar de plan o reconectar —
+  // en avería, corte, retiro de equipo, etc. no aplica tocar el plan del contrato.
+  const tipoBaseModal = (modal?.tipoOrden || '').replace(/_[ICD]$/, '');
+  const permitePlan = ['INSTALACION', 'CAMBIO_PLAN', 'RECONEXION'].includes(tipoBaseModal);
+  // Si se está eligiendo un plan (ej. un contrato de Cable que migra a Internet o
+  // Dúo con un "Cambio de plan"), los campos de IP/PPPoE dependen del tipo de
+  // servicio del plan NUEVO, no del sufijo original de la orden (que sigue siendo
+  // _C aunque el cliente esté migrando a un plan de Internet).
+  const planSeleccionado = permitePlan ? (planesQ.data || []).find(p => p.id === modal?.planId) : null;
+  const tipoServicioEfectivo = planSeleccionado ? planSeleccionado.tipoServicio : modal?.contratoServicio;
+  const requiereIp = tipoServicioEfectivo === 'INTERNET' || tipoServicioEfectivo === 'DUO' || tipoInfo.sufijo === 'I' || tipoInfo.sufijo === 'D';
   const sufijosPermitidos = modal?.contratoServicio ? [SUFIJO_POR_SERVICIO[modal.contratoServicio]] : ['I', 'C', 'D'];
+  // Un contrato no-activo (cortado/suspendido/baja) solo puede reconectarse o
+  // que le retiren el equipo — no tiene sentido abrirle otros tipos de orden.
+  const contratoInactivo = Boolean(modal?.contratoId) && modal?.contratoEstado && modal.contratoEstado !== 'ACTIVO';
+  const tiposBasePermitidos = contratoInactivo ? ['RECONEXION', 'RETIRO_EQUIPO'] : null;
 
   const guardarM = useMutation({
     mutationFn: () => {
@@ -171,11 +191,12 @@ export default function OrdenesServicio() {
   const abrirNuevo = () => setModal(emptyForm);
   const abrirEditar = (o) => setModal({
     id: o.id, contratoId: o.contratoId || '', contratoLabel: o.contrato?.numero || '',
-    contratoServicio: o.contrato?.tipoServicio || '',
+    contratoServicio: o.contrato?.tipoServicio || '', contratoEstado: o.contrato?.estado || '',
     tipoOrden: o.tipoOrden, fechaServicio: o.fechaServicio?.slice(0, 10) || hoy(),
     abonado: o.abonado, dni: o.dni || '', direccion: o.direccion, referencia: o.referencia || '',
     sector: o.sector || '', celular: o.celular || '', observacion: o.observacion || '',
     tecnicoId: o.tecnicoId || '', ipWan: o.ipWan || '', mascara: o.mascara || '', gateway: o.gateway || '',
+    pppoeUsuario: o.pppoeUsuario || '', pppoePassword: o.pppoePassword || '',
     mensualidad: o.mensualidad ?? '', mbps: o.mbps ?? '', planId: o.planId || '',
   });
 
@@ -311,21 +332,40 @@ export default function OrdenesServicio() {
                   const sufijo = SUFIJO_POR_SERVICIO[c.tipoServicio];
                   const tipoActualValido = TIPOS_ORDEN[modal.tipoOrden]?.sufijo === sufijo;
                   const primerTipo = Object.entries(TIPOS_ORDEN).find(([, v]) => v.sufijo === sufijo)?.[0];
+                  // Si el contrato no está activo (cortado/suspendido/baja), lo lógico es
+                  // reconectarlo primero: se sugiere ese tipo de orden en vez del primero de la lista.
+                  const tipoReconexion = `RECONEXION_${sufijo}`;
+                  const noEstaActivo = c.estado && c.estado !== 'ACTIVO';
+                  const tipoSugerido = noEstaActivo && TIPOS_ORDEN[tipoReconexion] ? tipoReconexion : (primerTipo || modal.tipoOrden);
                   setModal(m => ({
                     ...m, contratoId: c.id, contratoLabel: `${c.numero} — ${c.cliente?.nombres} ${c.cliente?.apellidos || ''}`.trim(),
-                    contratoServicio: c.tipoServicio,
-                    tipoOrden: tipoActualValido ? m.tipoOrden : (primerTipo || m.tipoOrden),
+                    contratoServicio: c.tipoServicio, contratoEstado: c.estado || '',
+                    tipoOrden: noEstaActivo ? tipoSugerido : (tipoActualValido ? m.tipoOrden : tipoSugerido),
                     abonado: `${c.cliente?.nombres} ${c.cliente?.apellidos || ''}`.trim(), dni: c.cliente?.dniRuc || '',
                     direccion: c.direccion, referencia: c.referencia || '', sector: c.sector || '', celular: c.cliente?.telefono || '',
                     planId: c.planId || '', mbps: c.mbps ?? (c.plan?.mbps ?? ''),
                     mensualidad: c.costoMensual != null ? c.costoMensual : (c.plan?.precio ?? ''),
                     ipWan: c.ipWan || '', mascara: c.mascara || '', gateway: c.gateway || '',
+                    pppoeUsuario: c.pppoeUsuario || '', pppoePassword: c.pppoePassword || '',
                   }));
                 }}
-                onLimpiar={() => setModal(m => ({ ...m, contratoId: '', contratoLabel: '', contratoServicio: '' }))}
+                onLimpiar={() => setModal(m => ({ ...m, contratoId: '', contratoLabel: '', contratoServicio: '', contratoEstado: '' }))}
               />
               {!modal.contratoId && (
                 <p style={{ margin: '-10px 0 0', fontSize: 11.5, color: '#7E9BB8' }}>Opcional: puedes crear una orden sin contrato (instalación nueva).</p>
+              )}
+              {modal.contratoId && ESTADO_CONTRATO_INFO[modal.contratoEstado] && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, margin: '-10px 0 0', padding: '9px 12px',
+                  background: ESTADO_CONTRATO_INFO[modal.contratoEstado].bg,
+                  border: `1px solid ${ESTADO_CONTRATO_INFO[modal.contratoEstado].border}`,
+                  borderRadius: 8, color: ESTADO_CONTRATO_INFO[modal.contratoEstado].color,
+                }}>
+                  <AlertTriangle size={15} />
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+                    Atención: este contrato está actualmente <strong>{ESTADO_CONTRATO_INFO[modal.contratoEstado].label}</strong>.
+                  </span>
+                </div>
               )}
 
               <SeccionLabel>Datos del abonado</SeccionLabel>
@@ -358,7 +398,7 @@ export default function OrdenesServicio() {
                   <select style={campoInputStyle} value={modal.tipoOrden} onChange={e => setModal({ ...modal, tipoOrden: e.target.value })}>
                     {sufijosPermitidos.map(suf => (
                       <optgroup key={suf} label={SERVICIO_LABEL[suf]}>
-                        {Object.entries(TIPOS_ORDEN).filter(([, v]) => v.sufijo === suf).map(([k, v]) => (
+                        {Object.entries(TIPOS_ORDEN).filter(([k, v]) => v.sufijo === suf && (!tiposBasePermitidos || tiposBasePermitidos.some(base => k.startsWith(base)))).map(([k, v]) => (
                           <option key={k} value={k}>{v.label}</option>
                         ))}
                       </optgroup>
@@ -369,20 +409,55 @@ export default function OrdenesServicio() {
                   <input type="date" style={campoInputStyle} value={modal.fechaServicio} onChange={e => setModal({ ...modal, fechaServicio: e.target.value })} />
                 </Campo>
               </div>
-              <div className="resp-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
-                <Campo label="Plan">
-                  <select style={campoInputStyle} value={modal.planId} onChange={e => setModal({ ...modal, planId: e.target.value })}>
-                    <option value="">Sin plan</option>
-                    {(planesQ.data || []).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                  </select>
-                </Campo>
-                <Campo label="Mbps">
-                  <input type="number" style={campoInputStyle} value={modal.mbps} onChange={e => setModal({ ...modal, mbps: e.target.value })} />
-                </Campo>
-                <Campo label="Mensualidad (S/)">
-                  <input type="number" step="0.01" style={campoInputStyle} value={modal.mensualidad} onChange={e => setModal({ ...modal, mensualidad: e.target.value })} />
-                </Campo>
-              </div>
+              {permitePlan ? (
+                <div className="resp-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+                  <Campo label="Plan">
+                    <select style={campoInputStyle} value={modal.planId} onChange={e => {
+                      const planId = e.target.value;
+                      const plan = (planesQ.data || []).find(p => p.id === planId);
+                      // Al elegir un plan, sus Mbps y precio se copian al formulario —
+                      // si no se hace esto, "Cambio de plan" cambia el nombre del plan
+                      // pero deja la mensualidad y velocidad viejas del plan anterior.
+                      setModal(m => ({
+                        ...m, planId,
+                        mbps: plan ? (plan.mbps ?? '') : m.mbps,
+                        mensualidad: plan ? plan.precio : m.mensualidad,
+                      }));
+                    }}>
+                      <option value="">Sin plan</option>
+                      {(planesQ.data || []).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </Campo>
+                  <Campo label="Mbps">
+                    <input type="number" style={campoInputStyle} value={modal.mbps} onChange={e => setModal({ ...modal, mbps: e.target.value })} />
+                  </Campo>
+                  <Campo label="Mensualidad (S/)">
+                    <input type="number" step="0.01" style={campoInputStyle} value={modal.mensualidad} onChange={e => setModal({ ...modal, mensualidad: e.target.value })} />
+                  </Campo>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 12px', background: '#F8FAFC', border: '1px solid #E2ECF4', borderRadius: 8 }}>
+                    <div>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Plan actual</span>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>
+                        {(planesQ.data || []).find(p => p.id === modal.planId)?.nombre || 'Sin plan'}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Mbps</span>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{modal.mbps || '—'}</div>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Mensualidad</span>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1E3A5F' }}>{modal.mensualidad ? `S/ ${Number(modal.mensualidad).toFixed(2)}` : '—'}</div>
+                    </div>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 11.5, color: '#7E9BB8' }}>
+                    El plan solo se puede elegir/cambiar en órdenes de Instalación, Cambio de plan o Reconexión.
+                  </p>
+                </div>
+              )}
               {requiereIp && (
                 <div className="resp-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
                   <Campo label="IP WAN">
@@ -395,6 +470,21 @@ export default function OrdenesServicio() {
                     <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.gateway} onChange={e => setModal({ ...modal, gateway: e.target.value })} />
                   </Campo>
                 </div>
+              )}
+              {requiereIp && (
+                <div className="resp-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Campo label="Usuario PPPoE">
+                    <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.pppoeUsuario} onChange={e => setModal({ ...modal, pppoeUsuario: e.target.value })} />
+                  </Campo>
+                  <Campo label="Contraseña PPPoE">
+                    <input style={{ ...campoInputStyle, fontFamily: 'monospace' }} value={modal.pppoePassword} onChange={e => setModal({ ...modal, pppoePassword: e.target.value })} />
+                  </Campo>
+                </div>
+              )}
+              {requiereIp && (
+                <p style={{ margin: '-8px 0 0', fontSize: 11.5, color: '#7E9BB8' }}>
+                  La IP WAN y el usuario PPPoE deben ser únicos — si los cambias, se validan y se actualizan en el contrato al completar la orden.
+                </p>
               )}
 
               <SeccionLabel>Asignación</SeccionLabel>
