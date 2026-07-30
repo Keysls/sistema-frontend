@@ -131,6 +131,7 @@ function NavItem({ to, label, Icon, exact, colapsado, esMovil, onCerrar }) {
 export default function Sidebar({ colapsado, esMovil, abierto, onCerrar }) {
   const usuario = useAuthStore((s) => s.usuario);
   const esTecnico = usuario?.rol === 'TECNICO';
+  const esSecretaria = usuario?.rol === 'SECRETARIA';
 
   const section = (label, items) => (
   <>
@@ -195,6 +196,14 @@ export default function Sidebar({ colapsado, esMovil, abierto, onCerrar }) {
             section('Operaciones', [
               { to: '/ordenes', label: 'Órdenes', icon: ClipboardList },
             ])
+          ) : esSecretaria ? (
+            <>
+              {section('Principal', NAV_PRINCIPAL)}
+              {section('Comercial', [
+                { to: '/contratos', label: 'Contratos', icon: FileText   },
+                { to: '/pagos',     label: 'Pagos',     icon: DollarSign },
+              ])}
+            </>
           ) : (
             <>
               {section('Principal',    NAV_PRINCIPAL)}

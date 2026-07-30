@@ -3,6 +3,13 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDown, LogOut, UserCircle, Menu, PanelLeft } from 'lucide-react';
 import { useAuthStore } from '../../store/auth.store';
 
+const ROL_LABEL = {
+  ADMIN:      'Administrador',
+  SUPERVISOR: 'Supervisor',
+  TECNICO:    'Técnico',
+  SECRETARIA: 'Secretario(a)',
+};
+
 const TITULOS = {
   '/':                     'Dashboard',
   '/ordenes':              'Órdenes',
@@ -105,7 +112,7 @@ export default function Topbar({ esMovil, colapsado, anchoSidebar, onMenuToggle,
             <div style={{ fontSize: 12, fontWeight: 700, color: '#0D1B2A' }}>
               {usuario?.nombre} {usuario?.apellido}
             </div>
-            <div style={{ fontSize: 10, color: '#8AAABB' }}>{usuario?.rol}</div>
+            <div style={{ fontSize: 10, color: '#8AAABB' }}>{ROL_LABEL[usuario?.rol] || usuario?.rol}</div>
           </div>
           <ChevronDown size={14} color="#8AAABB"
             style={{ transition: 'transform .15s', transform: showMenu ? 'rotate(180deg)' : 'none' }} />
